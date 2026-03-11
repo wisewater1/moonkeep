@@ -1,0 +1,10 @@
+WigleWifi-1.4,appRelease=1.0,model=Moonkeep,release=1.0,device=Moonkeep-Server,display=Moonkeep,board=Moonkeep,brand=Moonkeep
+MAC,SSID,AuthMode,FirstSeen,Channel,RSSI,CurrentLatitude,CurrentLongitude,AltitudeMeters,AccuracyMeters,Type
+0c:7c:28:df:ea:8f,Lilime72,WPA2-Personal,2026-03-11 08:29:35,136,-88.0,0.0,0.0,0,0,WIFI
+6c:4b:b4:9b:62:0c,Duncan,WPA2-Personal,2026-03-11 08:29:35,100,-85.5,0.0,0.0,0,0,WIFI
+b4:63:6f:b9:b6:14,ATT6ifzkhi,WPA2-Personal,2026-03-11 08:29:35,1,-50.5,0.0,0.0,0,0,WIFI
+b2:0d:13:67:e3:1f,ATTwmIATAc,WPA2-Personal,2026-03-11 08:41:10,136,-85.5,0.0,0.0,0,0,WIFI
+6c:4b:b4:9b:62:0c,Duncan,WPA2-Personal,2026-03-11 08:41:10,100,-84.5,0.0,0.0,0,0,WIFI
+0c:7c:28:df:ea:88,Lilime72,WPA2-Personal,2026-03-11 08:41:10,52,-83.5,0.0,0.0,0,0,WIFI
+b4:63:6f:b9:b6:14,ATT6ifzkhi,WPA2-Personal,2026-03-11 08:41:10,1,-50.5,0.0,0.0,0,0,WIFI
+28:74:f5:b7:74:84,ATTvK8fh7c,WPA2-Personal,2026-03-11 08:41:10,6,-73.5,0.0,0.0,0,0,WIFI
