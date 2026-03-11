@@ -3,3 +3,11 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+
+backend/logs/
+*.sqlite3
+.env
+.vscode/
+.idea/
+frontend/node_modules/
+backend/venv/

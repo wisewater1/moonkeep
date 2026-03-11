@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from core.plugin_manager import PluginManager
 from core.bettercap_adapter import NativeCapEngine
 from core.campaign_manager import CampaignManager
+from core.recon_adapter import recon_adapter
 import os
 import time
 import socket
@@ -431,6 +432,40 @@ async def wifi_capture(bssid: str):
     p = plugin_manager.get_plugin("WiFi-Strike")
     if not p: raise HTTPException(status_code=404)
     return await p.capture_handshake(bssid)
+
+@app.websocket("/ws/recon")
+async def recon_websocket(websocket: WebSocket):
+    await websocket.accept()
+    recon_adapter.start()
+    
+    async def recv_from_ws():
+        try:
+            while True:
+                data = await websocket.receive_text()
+                recon_adapter.send_input(data)
+        except WebSocketDisconnect:
+            pass
+
+    async def send_to_ws():
+        try:
+            async for chunk in recon_adapter.get_output():
+                await websocket.send_bytes(chunk)
+        except Exception:
+            pass
+
+    # Run both tasks concurrently
+    task1 = asyncio.create_task(recv_from_ws())
+    task2 = asyncio.create_task(send_to_ws())
+    
+    done, pending = await asyncio.wait(
+        [task1, task2],
+        return_when=asyncio.FIRST_COMPLETED
+    )
+    
+    for task in pending:
+        task.cancel()
+    
+    print("[Recon WS] Client disconnected")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

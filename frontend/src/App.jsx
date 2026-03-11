@@ -1,5 +1,67 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Terminal } from 'xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import 'xterm/css/xterm.css';
 import './index.css';
+
+const ReconTerminal = () => {
+  const terminalRef = useRef(null);
+  const xtermRef = useRef(null);
+  const wsRef = useRef(null);
+
+  useEffect(() => {
+    const term = new Terminal({
+      theme: { background: '#000000', foreground: '#22c55e', cursor: '#22c55e' },
+      fontFamily: 'Fira Code, monospace',
+      fontSize: 13,
+      cursorBlink: true
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+
+    xtermRef.current = term;
+    term.open(terminalRef.current);
+    // Slight delay to ensure DOM is ready before fitting
+    setTimeout(() => fitAddon.fit(), 50);
+
+    const ws = new WebSocket('ws://localhost:8001/ws/recon');
+    wsRef.current = ws;
+
+    ws.onmessage = async (e) => {
+      if (e.data instanceof Blob) {
+        const text = await e.data.text();
+        term.write(text);
+      } else {
+        term.write(e.data);
+      }
+    };
+
+    term.onData(data => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(data);
+      }
+    });
+
+    const handleResize = () => fitAddon.fit();
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      ws.close();
+      term.dispose();
+    };
+  }, []);
+
+  return (
+    <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
+        <h3>Recon-ng Interactive Terminal</h3>
+        <span className="status-badge active" style={{ fontSize: '0.6rem' }}>LIVE SOCK</span>
+      </div>
+      <div style={{ flex: 1, background: '#000', padding: '0.5rem', borderRadius: '8px', overflow: 'hidden' }} ref={terminalRef}></div>
+    </div>
+  );
+};
 
 const Dashboard = () => {
   const [plugins, setPlugins] = useState([]);
@@ -76,7 +138,7 @@ const Dashboard = () => {
       try {
         const res = await fetch('http://localhost:8001/plugins');
         const data = await res.json();
-        setPlugins(data);
+        setPlugins([...data, { name: 'Recon-Console' }]);
         if (data.length > 0) setActivePlugin(data[0].name);
 
         const campRes = await fetch('http://localhost:8001/campaigns');
@@ -521,6 +583,9 @@ const Dashboard = () => {
             <p style={{ marginTop: '1rem', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Traffic intercepted by Bettercap will emit websocket events under the PROXY type. Setup complete proxy configs via CLI.</p>
           </div>
         );
+
+      case "Recon-Console":
+        return <ReconTerminal />;
 
       default:
         return (
