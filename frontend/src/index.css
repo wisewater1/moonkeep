@@ -203,6 +203,69 @@ body {
   }
 }
 
+/* SLIDE-IN ANIMATION (Target Drawer) */
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* PULSE ANIMATION (Active scanning indicator) */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.pulse {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* GLASS CARD HOVER */
+.glass-card:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* GHOST BUTTON VARIANT */
+.btn-primary.ghost {
+  border-color: var(--secondary-accent);
+  color: var(--secondary-accent);
+}
+
+.btn-primary.ghost:hover {
+  background: rgba(244, 63, 94, 0.1);
+  box-shadow: 0 0 15px rgba(244, 63, 94, 0.2);
+}
+
+/* STATUS BADGE VARIANTS */
+.status-badge.critical {
+  color: var(--secondary-accent);
+  border-color: var(--secondary-accent);
+  background: rgba(244, 63, 94, 0.1);
+  box-shadow: 0 0 10px rgba(244, 63, 94, 0.3);
+}
+
+.status-badge.warning {
+  color: #f59e0b;
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+/* INPUT FOCUS STATES */
+input:focus, select:focus {
+  border-color: var(--neo-cyan) !important;
+  box-shadow: 0 0 8px var(--neo-cyan-glow);
+}
+
+/* HOVER GLOW */
+.hover-glow:hover {
+  box-shadow: 0 0 25px var(--accent-glow);
+}
+
 ::-webkit-scrollbar {
   width: 4px;
 }

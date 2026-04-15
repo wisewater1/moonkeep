@@ -165,12 +165,29 @@ const Dashboard = () => {
         const msg = data.data?.msg || (typeof data.data === 'string' ? data.data : JSON.stringify(data.data));
         setStrikeLog(prev => [...prev.slice(-40), `[${data.plugin}] ${msg}`]);
         const newToast = { id: Date.now() + Math.random(), ...data };
-        setToasts(prev => [...prev.slice(-4), newToast]);
-        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== newToast.id)), 5000);
+        setToasts(prev => [...prev.slice(-6), newToast]);
+        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== newToast.id)), 7000);
+
+        // Route events to module-specific state
+        if (data.type === "VULN_RESULT" && data.data?.cve) {
+          setVulnCards(prev => [...prev, { cve: data.data.cve, severity: data.data.severity || "HIGH", desc: data.data.desc || "" }]);
+        }
+        if (data.type === "SECRET_FOUND" && data.data) {
+          setSecretFindings(prev => [...prev, data.data]);
+        }
+        if (data.plugin === "Cyber-Strike") {
+          setCyberStrikeLog(prev => [...prev.slice(-60), msg]);
+        }
+        if (data.plugin === "AI-Orchestrator") {
+          if (data.data?.insight) setAiInsights(prev => [...prev, data.data.insight]);
+        }
+        if (data.type === "CREDENTIAL" && data.data) {
+          setCapturedCreds(prev => [...prev, typeof data.data === 'string' ? data.data : JSON.stringify(data.data)]);
+        }
       } else if (data.type === "EVENT") {
         setStrikeLog(prev => [...prev.slice(-40), data.data.msg]);
       } else {
-        setPackets(prev => [data, ...prev].slice(0, 30));
+        setPackets(prev => [data, ...prev].slice(0, 50));
       }
     };
 
@@ -421,8 +438,8 @@ const Dashboard = () => {
             </div>
             <p style={{ fontSize: '0.8rem', marginBottom: '1rem' }}>Targeting: {activeTarget?.ip || "None Selected"}</p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <button className="btn-primary" onClick={() => apiCall('/fuzzer/snmp', 'POST', { ip: activeTarget?.ip })}>FUZZ SNMP</button>
-              <button className="btn-primary" onClick={() => apiCall('/fuzzer/mdns', 'POST', { ip: activeTarget?.ip })}>FUZZ MDNS</button>
+              <button className="btn-primary" onClick={async () => { setFuzzingStatus("FUZZING SNMP"); const d = await apiCall('/fuzzer/snmp', 'POST', { ip: activeTarget?.ip }); setFuzzingStatus(d ? "COMPLETE" : "ERROR"); }}>FUZZ SNMP</button>
+              <button className="btn-primary" onClick={async () => { setFuzzingStatus("FUZZING MDNS"); const d = await apiCall('/fuzzer/mdns', 'POST', { ip: activeTarget?.ip }); setFuzzingStatus(d ? "COMPLETE" : "ERROR"); }}>FUZZ MDNS</button>
             </div>
           </div>
         );
@@ -444,7 +461,11 @@ const Dashboard = () => {
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
               <h3>Repository Secret Hunter</h3>
-              <button className="btn-primary" onClick={() => apiCall('/secret_hunter/hunt', 'POST')}>HUNT SECRETS</button>
+              <button className="btn-primary" onClick={async () => {
+                setSecretFindings([]);
+                const data = await apiCall('/secret_hunter/hunt', 'POST');
+                if (data?.findings) setSecretFindings(data.findings);
+              }}>HUNT SECRETS</button>
             </div>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               <table style={{ width: '100%', textAlign: 'left', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
@@ -475,7 +496,10 @@ const Dashboard = () => {
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
               <h3>Vulnerability Scanner</h3>
-              <button className="btn-primary" onClick={() => apiCall('/vuln_scan')}>START DEEP ANALYSIS</button>
+              <button className="btn-primary" onClick={async () => {
+                const data = await apiCall('/vuln_scan');
+                if (data) setStrikeLog(prev => [...prev.slice(-40), `[Vuln-Scanner] Scanning ${data.target}...`]);
+              }}>START DEEP ANALYSIS</button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem', overflowY: 'auto' }}>
               {vulnCards.map((v, i) => (
@@ -502,8 +526,14 @@ const Dashboard = () => {
                 <option value="Infiltrator">Infiltrator (MITM Proxies)</option>
                 <option value="Ghost">Ghost (Wireless Wardriving)</option>
               </select>
-              <button className="btn-primary" onClick={() => apiCall('/cyber_strike/start', 'POST', { role: cyberStrikeRole })}>ENGAGE {cyberStrikeRole.toUpperCase()}</button>
-              <button className="btn-primary ghost" onClick={() => apiCall('/cyber_strike/stop', 'POST')}>ABORT</button>
+              <button className="btn-primary" onClick={async () => {
+                setCyberStrikeLog(prev => [...prev, `[*] Engaging ${cyberStrikeRole} protocol...`]);
+                await apiCall('/cyber_strike/start', 'POST', { role: cyberStrikeRole });
+              }}>ENGAGE {cyberStrikeRole.toUpperCase()}</button>
+              <button className="btn-primary ghost" onClick={async () => {
+                await apiCall('/cyber_strike/stop', 'POST');
+                setCyberStrikeLog(prev => [...prev, `[!] ${cyberStrikeRole} protocol ABORTED`]);
+              }}>ABORT</button>
             </div>
             <div style={{ flex: 1, background: '#000', padding: '1rem', marginTop: '1rem', borderRadius: '6px', overflowY: 'auto', border: '1px solid var(--glass-border)', fontFamily: 'monospace', fontSize: '0.75rem' }}>
               {cyberStrikeLog.map((log, i) => <div key={i} style={{ color: '#22c55e', margin: '0.2rem 0' }}>{log}</div>)}
@@ -519,7 +549,10 @@ const Dashboard = () => {
               <h3>AI Copilot War Room</h3>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <span className="status-badge active">BRAIN ONLINE</span>
-                <button className="btn-primary flex items-center gap-2" onClick={() => apiCall('/ai/analyze', 'POST')}>
+                <button className="btn-primary flex items-center gap-2" onClick={async () => {
+                  const data = await apiCall('/ai/analyze', 'POST');
+                  if (data?.insights) setAiInsights(data.insights);
+                }}>
                   ANALYZE SECRETS & VULNS
                 </button>
               </div>
@@ -533,7 +566,10 @@ const Dashboard = () => {
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
               <input type="text" value={aiCmd} onChange={e => setAiCmd(e.target.value)} placeholder="e.g. Pivot through the 192 LAN seeking open databases..." style={{ flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', padding: '0.5rem', color: 'var(--neo-cyan)', fontFamily: 'Fira Code', fontSize: '0.8rem', outline: 'none' }} />
-              <button className="btn-primary" onClick={() => apiCall('/ai/command', 'POST', { instruction: aiCmd })}>PLAN ATTACK</button>
+              <button className="btn-primary" onClick={async () => {
+                const data = await apiCall('/ai/command', 'POST', { instruction: aiCmd });
+                if (data?.plan) setAiPlan(data.plan);
+              }}>PLAN ATTACK</button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', flex: 1, overflow: 'hidden' }}>
               <div style={{ background: 'rgba(167,139,250,0.05)', borderRadius: '6px', border: '1px solid rgba(167,139,250,0.2)', padding: '1rem', overflowY: 'auto' }}>

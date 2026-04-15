@@ -257,15 +257,10 @@ async def secret_hunter_start():
 async def vulnerability_scan(target: str = None):
     if not target: target = target_store.last_target
     if not target: raise HTTPException(status_code=400, detail="No target specified")
-    orchestrator = plugin_manager.get_plugin("AI-Orchestrator")
-    if orchestrator:
+    vuln_plugin = plugin_manager.get_plugin("Vuln-Scanner")
+    if vuln_plugin:
         event_queue.put_nowait({"ts": time.time(), "plugin": "Vuln-Scanner", "type": "INFO", "data": {"msg": f"Initiating deep audit on {target}"}})
-        event_queue.put_nowait({
-            "ts": time.time(),
-            "type": "VULN_RESULT",
-            "plugin": "Vuln-Scanner", 
-            "data": {"cve": "CVE-2021-44228", "severity": "CRITICAL", "desc": "Log4j Remote Code Execution"}
-        })
+        asyncio.create_task(vuln_plugin.scan_target(target))
     return {"status": "Analysis in progress", "target": target}
 
 # CYBER STRIKE ENDPOINTS
@@ -360,6 +355,41 @@ async def fuzz_snmp(payload: dict):
     if not plugin: raise HTTPException(status_code=404)
     target_ip = payload.get("ip", "127.0.0.1")
     return await plugin.fuzz_snmp(target_ip)
+
+@app.post("/fuzzer/upnp")
+async def fuzz_upnp(payload: dict):
+    plugin = plugin_manager.get_plugin("Fuzzer")
+    if not plugin: raise HTTPException(status_code=404)
+    target_ip = payload.get("ip", "239.255.255.250")
+    return await plugin.fuzz_upnp(target_ip)
+
+@app.get("/fuzzer/stats")
+async def fuzzer_stats():
+    plugin = plugin_manager.get_plugin("Fuzzer")
+    if not plugin: raise HTTPException(status_code=404)
+    return plugin.get_stats()
+
+# WIFI HANDSHAKES
+@app.get("/wifi/handshakes")
+async def wifi_handshakes():
+    plugin = plugin_manager.get_plugin("WiFi-Strike")
+    if not plugin: raise HTTPException(status_code=404)
+    return {"handshakes": plugin.get_handshakes()}
+
+@app.post("/wifi/pmkid")
+async def wifi_pmkid(payload: dict):
+    plugin = plugin_manager.get_plugin("WiFi-Strike")
+    if not plugin: raise HTTPException(status_code=404)
+    bssid = payload.get("bssid")
+    if not bssid: raise HTTPException(status_code=400, detail="BSSID required")
+    return await plugin.pmkid_capture(bssid)
+
+# DNS LOG FROM SNIFFER
+@app.get("/sniffer/dns")
+async def sniffer_dns_log():
+    plugin = plugin_manager.get_plugin("Sniffer")
+    if not plugin: raise HTTPException(status_code=404)
+    return {"dns_log": plugin.get_dns_log()}
 
 # HID-BLE ELITE ENDPOINTS
 @app.get("/hid_ble/scan")
