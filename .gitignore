@@ -8,6 +8,9 @@ backend/logs/
 logs/
 *.sqlite3
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 .env
 .vscode/
 .idea/
