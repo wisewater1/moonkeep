@@ -5,9 +5,12 @@ __pycache__/
 *.pyc
 
 backend/logs/
+logs/
 *.sqlite3
+*.db
 .env
 .vscode/
 .idea/
 frontend/node_modules/
 backend/venv/
+frontend/dist/
