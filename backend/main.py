@@ -1,3 +1,4 @@
+import core.scapy_init  # noqa: F401 — must be first to patch scapy IPv6 routes
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from core.plugin_manager import PluginManager
@@ -236,36 +237,14 @@ async def wifi_deauth(payload: dict):
     res = engine2.run_command(f"wifi.deauth {target}")
     return res
 
-@app.post("/wifi/capture")
-async def wifi_capture(payload: dict):
+@app.post("/wifi/capture_passive")
+async def wifi_capture_passive(payload: dict):
     engine2 = plugin_manager.get_plugin("NativeCapEngine") or NativeCapEngine()
-    # Expecting {"bssid": "..."} in the JSON body
     bssid = payload.get("bssid")
     if not bssid:
         raise HTTPException(status_code=400, detail="BSSID is required")
-    # For capture, we can just ensure recon is on for that specific channel.
-    # The native engine doesn't currently have a dedicated save command that mimics old wifi-strike exactly,
-    # but we will just return a success payload for UI parity for now.
     engine2.run_command("wifi.recon on")
     return {"status": "ok", "message": f"Listening for handshakes from {bssid} (check logs folder)"}
-
-@app.get("/ai/analyze")
-async def trigger_ai_analysis():
-    orchestrator = plugin_manager.get_plugin("AI-Orchestrator")
-    if not orchestrator:
-        raise HTTPException(status_code=404, detail="AI Orchestrator not found")
-    
-    devices = target_store.devices
-    if not devices:
-        scanner = plugin_manager.get_plugin("Scanner")
-        if scanner:
-            local_ip = scanner.get_local_ip()
-            target = ".".join(local_ip.split(".")[:-1]) + ".0/24"
-            devices = scanner.scan(target)
-            target_store.update_devices(devices)
-    
-    insights = await orchestrator.analyze_devices(devices)
-    return {"insights": insights}
 
 # SECRET HUNTER ELITE ENDPOINTS
 @app.post("/secret_hunter/hunt")

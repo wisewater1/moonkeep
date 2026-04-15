@@ -8,16 +8,34 @@ class ReconAdapter:
     def __init__(self):
         self.process = None
         self.output_queue = asyncio.Queue()
-        self.loop = asyncio.get_event_loop()
+        self._loop = None
         self.is_running = False
+
+    @property
+    def loop(self):
+        if self._loop is None or self._loop.is_closed():
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._loop = asyncio.new_event_loop()
+        return self._loop
 
     def start(self):
         if self.process and self.process.poll() is None:
             return  # Already running
 
-        # Path to Python in the virtual environment
-        python_exe = os.path.join(os.getcwd(), 'venv', 'Scripts', 'python.exe')
-        recon_ng_path = os.path.join(os.getcwd(), 'recon-ng', 'recon-ng')
+        # Resolve paths relative to the backend directory
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Try .venv first (standard), then venv (legacy)
+        venv_dir = os.path.join(backend_dir, '.venv')
+        if not os.path.isdir(venv_dir):
+            venv_dir = os.path.join(backend_dir, 'venv')
+        python_exe = os.path.join(venv_dir, 'bin', 'python3')
+        if not os.path.isfile(python_exe):
+            python_exe = os.path.join(venv_dir, 'bin', 'python')
+        if not os.path.isfile(python_exe):
+            python_exe = 'python3'  # fallback to system python
+        recon_ng_path = os.path.join(backend_dir, 'recon-ng', 'recon-ng')
 
         env = os.environ.copy()
         env['PYTHONUNBUFFERED'] = '1'
