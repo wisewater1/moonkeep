@@ -49,7 +49,7 @@ class AIOrchestratorPlugin(BasePlugin):
                     insights.append(f"Node {ip}: Identified as high-value target. Suggesting deep port scan.")
                     c.execute("INSERT OR REPLACE INTO edges VALUES (?, ?, ?)", (ip, f"vuln_{ip}", "HAS_VULN"))
                 
-                vendor = d.get("vendor", "").lower()
+                vendor = (d.get("vendor") or "").lower()
                 if "apple" in vendor:
                     insights.append(f"Node {ip}: Apple device detected. Analyzing for MDNS/AirPlay vulnerabilities.")
                 elif "espressif" in vendor:

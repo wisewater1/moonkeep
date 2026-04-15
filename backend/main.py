@@ -205,8 +205,7 @@ async def perform_scan(target: str = ""):
         local_ip = scanner.get_local_ip()
         target = ".".join(local_ip.split(".")[:-1]) + ".0/24"
     
-    loop = asyncio.get_event_loop()
-    devices = await loop.run_in_executor(None, scanner.scan, target)
+    devices = await asyncio.get_running_loop().run_in_executor(None, scanner.scan, target)
     target_store.update_devices(devices) # PERSIST TO GLOBAL STORE
     return {"target": target, "devices": devices}
 
@@ -344,16 +343,23 @@ async def pe_exfiltrate(body: ExfilBody):
     return {"status": "Exfiltration initiated", "target": target}
 
 @app.get("/post_exploit/persistence")
-async def pe_persistence(os: str = "windows"):
+async def pe_persistence(os_type: str = "windows"):
     plugin = plugin_manager.get_plugin("Post-Exploit")
     if not plugin: raise HTTPException(status_code=404, detail="Post-Exploit plugin not found")
-    return await plugin.generate_persistence(os)
+    return await plugin.generate_persistence(os_type)
 
 @app.post("/fuzzer/mdns")
 async def fuzz_mdns(ip: str = "224.0.0.251"):
     plugin = plugin_manager.get_plugin("Fuzzer")
     if not plugin: raise HTTPException(status_code=404)
     return await plugin.fuzz_mdns(ip)
+
+@app.post("/fuzzer/snmp")
+async def fuzz_snmp(payload: dict):
+    plugin = plugin_manager.get_plugin("Fuzzer")
+    if not plugin: raise HTTPException(status_code=404)
+    target_ip = payload.get("ip", "127.0.0.1")
+    return await plugin.fuzz_snmp(target_ip)
 
 # HID-BLE ELITE ENDPOINTS
 @app.get("/hid_ble/scan")
@@ -406,11 +412,14 @@ async def spoofer_stop():
     return cap_engine.run_command("arp.spoof off")
 
 # WIFI ELITE ENDPOINTS
+class WifiCaptureBody(BaseModel):
+    bssid: str
+
 @app.post("/wifi/capture")
-async def wifi_capture(bssid: str):
+async def wifi_capture(body: WifiCaptureBody):
     p = plugin_manager.get_plugin("WiFi-Strike")
     if not p: raise HTTPException(status_code=404)
-    return await p.capture_handshake(bssid)
+    return await p.capture_handshake(body.bssid)
 
 @app.websocket("/ws/recon")
 async def recon_websocket(websocket: WebSocket):
