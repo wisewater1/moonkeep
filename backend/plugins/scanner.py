@@ -4,6 +4,7 @@ import socket
 import subprocess
 import re
 import struct
+import time
 
 # Compact OUI prefix table — top vendors seen in pentests
 OUI_TABLE = {
@@ -55,9 +56,26 @@ class ScannerPlugin(BasePlugin):
         """Perform ARP scan with vendor identification and hostname resolution."""
         self.emit("INFO", {"msg": f"Scanning {target_ip}..."})
         devices: list[dict[str, str]] = []
-        devices.extend(self._arp_scan(target_ip))
+
+        # ARP scan with retries (3 attempts, increasing timeout)
+        for attempt in range(3):
+            timeout = 3 + attempt * 2  # 3s, 5s, 7s
+            found = self._arp_scan(target_ip, timeout=timeout)
+            if found:
+                devices.extend(found)
+                break
+            self.emit("INFO", {"msg": f"ARP attempt {attempt + 1}/3 returned 0 hosts, retrying..."})
+            time.sleep(0.5)
+
+        # Fallback: OS ARP table
         if not devices:
+            self.emit("INFO", {"msg": "ARP scan failed, reading OS ARP cache..."})
             devices.extend(self._os_arp_fallback(target_ip))
+
+        # Fallback: ping sweep + ARP cache
+        if not devices:
+            self.emit("INFO", {"msg": "ARP cache empty, running ping sweep..."})
+            devices.extend(self._ping_sweep(target_ip))
 
         # Enrich with vendor + hostname
         for d in devices:
@@ -69,13 +87,13 @@ class ScannerPlugin(BasePlugin):
         self.emit("SUCCESS", {"msg": f"Discovered {len(result)} hosts on {target_ip}"})
         return result
 
-    def _arp_scan(self, target_ip: str) -> list[dict[str, str]]:
+    def _arp_scan(self, target_ip: str, timeout: int = 3) -> list[dict[str, str]]:
         """Use Scapy to send ARP requests and collect responses."""
         try:
             arp = ARP(pdst=target_ip)
             ether = Ether(dst="ff:ff:ff:ff:ff:ff")
             packet = ether / arp
-            result = srp(packet, timeout=3, verbose=0)[0]
+            result = srp(packet, timeout=timeout, verbose=0, retry=2)[0]
             return [{'ip': rcv.psrc, 'mac': rcv.hwsrc} for _, rcv in result]
         except Exception as e:
             print(f"Scapy ARP scan failed: {e}")
@@ -95,6 +113,37 @@ class ScannerPlugin(BasePlugin):
         except Exception as e:
             print(f"OS ARP fallback failed: {e}")
             return []
+
+    def _ping_sweep(self, target_ip: str) -> list[dict[str, str]]:
+        """Ping sweep a /24 subnet then harvest ARP cache for MAC addresses."""
+        # Extract base network from target (e.g. 192.168.1.0/24 -> 192.168.1)
+        base = target_ip.split('/')[0]
+        parts = base.split('.')
+        if len(parts) == 4:
+            subnet = '.'.join(parts[:3])
+        else:
+            return []
+
+        # Parallel ping using fping if available, else sequential
+        try:
+            subprocess.run(
+                ["fping", "-a", "-g", f"{subnet}.1", f"{subnet}.254", "-c", "1", "-t", "200"],
+                capture_output=True, text=True, timeout=30
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            # Fallback: fire-and-forget pings in parallel
+            try:
+                for i in range(1, 255):
+                    subprocess.Popen(
+                        ["ping", "-c", "1", "-W", "1", f"{subnet}.{i}"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    )
+                time.sleep(3)  # Wait for ping replies to populate ARP cache
+            except Exception:
+                pass
+
+        # Now harvest the ARP cache which should be populated
+        return self._os_arp_fallback(target_ip)
 
     def _lookup_vendor(self, mac: str) -> str:
         """Lookup vendor from MAC OUI prefix."""

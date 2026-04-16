@@ -223,44 +223,61 @@ async def perform_wifi_scan():
         target_store.update_networks(networks) # PERSIST TO GLOBAL STORE
     return {"networks": networks}
 
+class WifiDeauthBody(BaseModel):
+    target: str = "ff:ff:ff:ff:ff:ff"
+    ap: str
+
 @app.post("/wifi/deauth")
-async def wifi_deauth(payload: dict):
+async def wifi_deauth(body: WifiDeauthBody):
     engine2 = plugin_manager.get_plugin("NativeCapEngine") or NativeCapEngine()
-    # Expecting {"target": "...", "ap": "..."} in the JSON body
-    ap = payload.get("ap")
-    target = payload.get("target", "ff:ff:ff:ff:ff:ff")
-    if not ap:
-        raise HTTPException(status_code=400, detail="AP MAC is required")
-    # Native bettercap engine: wifi.deauth <target> (it automatically manages the AP based on what it sees, but we can just use the target mac)
-    # The actual bettercap usually targets a specific client MAC, but broadcast is fine.
-    res = engine2.run_command(f"wifi.deauth {target}")
+    res = engine2.run_command(f"wifi.deauth {body.target}")
     return res
 
+class WifiBSSIDBody(BaseModel):
+    bssid: str
+
 @app.post("/wifi/capture_passive")
-async def wifi_capture_passive(payload: dict):
+async def wifi_capture_passive(body: WifiBSSIDBody):
     engine2 = plugin_manager.get_plugin("NativeCapEngine") or NativeCapEngine()
-    bssid = payload.get("bssid")
-    if not bssid:
-        raise HTTPException(status_code=400, detail="BSSID is required")
     engine2.run_command("wifi.recon on")
-    return {"status": "ok", "message": f"Listening for handshakes from {bssid} (check logs folder)"}
+    return {"status": "ok", "message": f"Listening for handshakes from {body.bssid} (check logs folder)"}
 
 # SECRET HUNTER ELITE ENDPOINTS
 @app.post("/secret_hunter/hunt")
 async def secret_hunter_start():
     plugin = plugin_manager.get_plugin("Secret-Hunter")
     if not plugin: raise HTTPException(status_code=404)
-    asyncio.create_task(plugin.hunt())
-    return {"status": "Hunting secrets in background"}
+    findings = await plugin.hunt()
+    return {"status": "Hunt complete", "findings": findings}
+
+@app.get("/secret_hunter/results")
+async def secret_hunter_results():
+    plugin = plugin_manager.get_plugin("Secret-Hunter")
+    if not plugin: raise HTTPException(status_code=404)
+    return {"findings": getattr(plugin, 'last_findings', [])}
 
 @app.get("/vuln_scan")
 async def vulnerability_scan(target: str = None):
-    if not target: target = target_store.last_target
-    if not target: raise HTTPException(status_code=400, detail="No target specified")
+    if not target:
+        target = target_store.last_target
+    if not target:
+        # Auto-discover local subnet target
+        scanner = plugin_manager.get_plugin("Scanner")
+        if scanner:
+            local_ip = scanner.get_local_ip()
+            target = local_ip
+        else:
+            raise HTTPException(status_code=400, detail="No target specified. Run /scan first or provide ?target=X.X.X.X")
+    # Validate IP
+    try:
+        socket.inet_aton(target)
+    except socket.error:
+        raise HTTPException(status_code=400, detail=f"Invalid target IP: {target}")
     vuln_plugin = plugin_manager.get_plugin("Vuln-Scanner")
-    if vuln_plugin:
-        event_queue.put_nowait({"ts": time.time(), "plugin": "Vuln-Scanner", "type": "INFO", "data": {"msg": f"Initiating deep audit on {target}"}})
-        asyncio.create_task(vuln_plugin.scan_target(target))
+    if not vuln_plugin:
+        raise HTTPException(status_code=404, detail="Vuln-Scanner plugin not found")
+    event_queue.put_nowait({"ts": time.time(), "plugin": "Vuln-Scanner", "type": "INFO", "data": {"msg": f"Initiating deep audit on {target}"}})
+    asyncio.create_task(vuln_plugin.scan_target(target))
     return {"status": "Analysis in progress", "target": target}
 
 # CYBER STRIKE ENDPOINTS
@@ -343,24 +360,28 @@ async def pe_persistence(os_type: str = "windows"):
     if not plugin: raise HTTPException(status_code=404, detail="Post-Exploit plugin not found")
     return await plugin.generate_persistence(os_type)
 
+class FuzzerTargetBody(BaseModel):
+    ip: Optional[str] = None
+
 @app.post("/fuzzer/mdns")
-async def fuzz_mdns(ip: str = "224.0.0.251"):
+async def fuzz_mdns(body: FuzzerTargetBody = None):
     plugin = plugin_manager.get_plugin("Fuzzer")
     if not plugin: raise HTTPException(status_code=404)
-    return await plugin.fuzz_mdns(ip)
+    target_ip = (body.ip if body else None) or "224.0.0.251"
+    return await plugin.fuzz_mdns(target_ip)
 
 @app.post("/fuzzer/snmp")
-async def fuzz_snmp(payload: dict):
+async def fuzz_snmp(body: FuzzerTargetBody = None):
     plugin = plugin_manager.get_plugin("Fuzzer")
     if not plugin: raise HTTPException(status_code=404)
-    target_ip = payload.get("ip", "127.0.0.1")
+    target_ip = (body.ip if body else None) or "127.0.0.1"
     return await plugin.fuzz_snmp(target_ip)
 
 @app.post("/fuzzer/upnp")
-async def fuzz_upnp(payload: dict):
+async def fuzz_upnp(body: FuzzerTargetBody = None):
     plugin = plugin_manager.get_plugin("Fuzzer")
     if not plugin: raise HTTPException(status_code=404)
-    target_ip = payload.get("ip", "239.255.255.250")
+    target_ip = (body.ip if body else None) or "239.255.255.250"
     return await plugin.fuzz_upnp(target_ip)
 
 @app.get("/fuzzer/stats")
@@ -377,12 +398,10 @@ async def wifi_handshakes():
     return {"handshakes": plugin.get_handshakes()}
 
 @app.post("/wifi/pmkid")
-async def wifi_pmkid(payload: dict):
+async def wifi_pmkid(body: WifiBSSIDBody):
     plugin = plugin_manager.get_plugin("WiFi-Strike")
     if not plugin: raise HTTPException(status_code=404)
-    bssid = payload.get("bssid")
-    if not bssid: raise HTTPException(status_code=400, detail="BSSID required")
-    return await plugin.pmkid_capture(bssid)
+    return await plugin.pmkid_capture(body.bssid)
 
 # DNS LOG FROM SNIFFER
 @app.get("/sniffer/dns")
@@ -398,11 +417,14 @@ async def hid_ble_scan():
     if not plugin: raise HTTPException(status_code=404, detail="HID-BLE plugin not found")
     return await plugin.scan_ble()
 
+class HIDInjectBody(BaseModel):
+    target_mac: str
+
 @app.post("/hid_ble/inject")
-async def hid_ble_inject(target_mac: str):
+async def hid_ble_inject(body: HIDInjectBody):
     plugin = plugin_manager.get_plugin("HID-BLE-Strike")
     if not plugin: raise HTTPException(status_code=404)
-    return await plugin.mousejack_inject(target_mac)
+    return await plugin.mousejack_inject(body.target_mac)
 
 # SNIFFER ELITE ENDPOINTS
 @app.get("/sniffer/credentials")
@@ -419,9 +441,16 @@ async def sniffer_start():
 async def sniffer_stop():
     return cap_engine.run_command("net.sniff off")
 
+class ProxyStartBody(BaseModel):
+    port: Optional[int] = 8080
+
 # PROXY ELITE ENDPOINTS
 @app.post("/proxy/start")
-async def proxy_start():
+async def proxy_start(body: ProxyStartBody = None):
+    port = body.port if body else 8080
+    plugin = plugin_manager.get_plugin("Proxy")
+    if plugin:
+        await plugin.start(port=port)
     return cap_engine.run_command("http.proxy on")
 
 @app.post("/proxy/stop")
@@ -431,9 +460,16 @@ async def proxy_stop():
 # (removed legacy GET /cyber_strike/start — POST /cyber_strike/start is the canonical route)
 
 # SPOOFER ELITE ENDPOINTS
+class SpooferStartBody(BaseModel):
+    targets: Optional[list[str]] = None
+
 @app.post("/spoofer/start")
-async def spoofer_start(targets: list[str] = None):
-    if targets is not None:
+async def spoofer_start(body: SpooferStartBody = None):
+    plugin = plugin_manager.get_plugin("Spoofer")
+    targets = body.targets if body else None
+    if plugin:
+        await plugin.start(targets=targets, gateway=None)
+    if targets:
         cap_engine.run_command(f"set arp.spoof.targets {','.join(targets)}")
     return cap_engine.run_command("arp.spoof on")
 

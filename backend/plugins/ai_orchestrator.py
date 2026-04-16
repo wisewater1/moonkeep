@@ -61,29 +61,108 @@ class AIOrchestratorPlugin(BasePlugin):
 
     async def plan_attack(self, instruction: str, context: dict):
         self.emit("INFO", {"msg": f"Generating attack plan for: {instruction}"})
-        # Mock logic to parse instruction and generate a plan based on keywords
         plan = []
-        if "pivot" in instruction.lower():
+        inst = instruction.lower()
+
+        # Build plan based on keywords in the instruction
+        if "pivot" in inst or "lateral" in inst:
             plan.append({"step": 1, "plugin": "Scanner", "action": "scan", "params": {}})
-            plan.append({"step": 2, "plugin": "Vuln-Scanner", "action": "vuln_scan", "params": {}})
-            plan.append({"step": 3, "plugin": "Post-Exploit", "action": "pe_pivot", "params": {"target_ip": "AUTO"}})
-        elif "fuzz" in instruction.lower():
-            plan.append({"step": 1, "plugin": "Fuzzer", "action": "fuzz_mdns", "params": {}})
-        else:
+            plan.append({"step": 2, "plugin": "Vuln-Scanner", "action": "scan_target", "params": {}})
+            plan.append({"step": 3, "plugin": "Post-Exploit", "action": "pivot_scan", "params": {}})
+        elif "fuzz" in inst:
+            plan.append({"step": 1, "plugin": "Fuzzer", "action": "fuzz_snmp", "params": {}})
+            plan.append({"step": 2, "plugin": "Fuzzer", "action": "fuzz_mdns", "params": {}})
+            plan.append({"step": 3, "plugin": "Fuzzer", "action": "fuzz_upnp", "params": {}})
+        elif "wifi" in inst or "wireless" in inst:
+            plan.append({"step": 1, "plugin": "Wardriver", "action": "scan_wifi", "params": {}})
+            plan.append({"step": 2, "plugin": "WiFi-Strike", "action": "start", "params": {}})
+        elif "mitm" in inst or "intercept" in inst or "poison" in inst:
+            plan.append({"step": 1, "plugin": "Scanner", "action": "scan", "params": {}})
+            plan.append({"step": 2, "plugin": "Spoofer", "action": "start", "params": {}})
+            plan.append({"step": 3, "plugin": "Sniffer", "action": "start", "params": {}})
+        elif "secret" in inst or "credential" in inst or "key" in inst:
             plan.append({"step": 1, "plugin": "Secret-Hunter", "action": "hunt", "params": {}})
-            plan.append({"step": 2, "plugin": "Scanner", "action": "scan", "params": {}})
-        
+        elif "full" in inst or "killchain" in inst or "everything" in inst:
+            plan.append({"step": 1, "plugin": "Scanner", "action": "scan", "params": {}})
+            plan.append({"step": 2, "plugin": "Secret-Hunter", "action": "hunt", "params": {}})
+            plan.append({"step": 3, "plugin": "Vuln-Scanner", "action": "scan_target", "params": {}})
+            plan.append({"step": 4, "plugin": "Spoofer", "action": "start", "params": {}})
+            plan.append({"step": 5, "plugin": "Sniffer", "action": "start", "params": {}})
+        else:
+            plan.append({"step": 1, "plugin": "Scanner", "action": "scan", "params": {}})
+            plan.append({"step": 2, "plugin": "Secret-Hunter", "action": "hunt", "params": {}})
+            plan.append({"step": 3, "plugin": "Vuln-Scanner", "action": "scan_target", "params": {}})
+
         return plan
 
     async def execute_plan(self, plan: list, plugin_manager):
+        """Execute a generated attack plan by invoking real plugin methods."""
         self.emit("INFO", {"msg": f"Executing {len(plan)}-step attack sequence..."})
+        completed = 0
+
         for step in plan:
-            self.emit("INFO", {"msg": f"Running Step {step['step']}: {step['plugin']} [{step['action']}]"})
-            await asyncio.sleep(1.5) # Simulate execution time
-            plugin = plugin_manager.get_plugin(step['plugin'])
-            if plugin:
-                self.emit("INFO", {"msg": f"Step {step['step']} component active. Awaiting results..."})
-        self.emit("SUCCESS", {"msg": "Autonomous strike plan execution completed."})
+            step_num = step.get('step', completed + 1)
+            plugin_name = step['plugin']
+            action = step['action']
+            self.emit("INFO", {"msg": f"Step {step_num}: {plugin_name} → {action}"})
+
+            plugin = plugin_manager.get_plugin(plugin_name)
+            if not plugin:
+                self.emit("ERROR", {"msg": f"Step {step_num}: {plugin_name} not found, skipping"})
+                continue
+
+            try:
+                method = getattr(plugin, action, None)
+                if not method or not callable(method):
+                    self.emit("ERROR", {"msg": f"Step {step_num}: {plugin_name} has no method '{action}'"})
+                    continue
+
+                # Route to the right invocation based on action name
+                if action == "scan":
+                    target_ip = ""
+                    if hasattr(self, 'target_store') and self.target_store.last_target:
+                        base = self.target_store.last_target.rsplit('.', 1)[0]
+                        target_ip = f"{base}.0/24"
+                    result = await asyncio.get_running_loop().run_in_executor(None, plugin.scan, target_ip)
+                    if result and hasattr(self, 'target_store'):
+                        self.target_store.update_devices(result)
+                    self.emit("INFO", {"msg": f"Step {step_num}: Discovered {len(result) if result else 0} hosts"})
+                elif action == "scan_target":
+                    target = self.target_store.last_target if hasattr(self, 'target_store') else None
+                    if target:
+                        results = await plugin.scan_target(target)
+                        self.emit("INFO", {"msg": f"Step {step_num}: Found {len(results)} vulnerabilities"})
+                    else:
+                        self.emit("INFO", {"msg": f"Step {step_num}: No target for vuln scan"})
+                elif action == "hunt":
+                    findings = await plugin.hunt()
+                    self.emit("INFO", {"msg": f"Step {step_num}: Found {len(findings)} secrets"})
+                elif action == "pivot_scan":
+                    target = self.target_store.last_target if hasattr(self, 'target_store') else None
+                    if target:
+                        result = await plugin.pivot_scan(target)
+                        self.emit("INFO", {"msg": f"Step {step_num}: Pivot scan: {result}"})
+                elif action == "scan_wifi":
+                    networks = plugin.scan_wifi()
+                    self.emit("INFO", {"msg": f"Step {step_num}: Found {len(networks)} networks"})
+                elif action in ("start", "fuzz_snmp", "fuzz_mdns", "fuzz_upnp"):
+                    if asyncio.iscoroutinefunction(method):
+                        await method()
+                    else:
+                        method()
+                    self.emit("INFO", {"msg": f"Step {step_num}: {plugin_name} activated"})
+                else:
+                    if asyncio.iscoroutinefunction(method):
+                        await method()
+                    else:
+                        method()
+                    self.emit("INFO", {"msg": f"Step {step_num}: {plugin_name}.{action} executed"})
+
+                completed += 1
+            except Exception as e:
+                self.emit("ERROR", {"msg": f"Step {step_num}: {plugin_name} error: {str(e)[:80]}"})
+
+        self.emit("SUCCESS", {"msg": f"Attack sequence complete: {completed}/{len(plan)} steps executed"})
 
     def get_graph_data(self):
         """

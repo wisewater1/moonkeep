@@ -399,15 +399,22 @@ const Dashboard = () => {
       case "Sniffer":
         return (
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <h3>DPI Credential Loot</h3>
-            <div className="glass-card" style={{ border: '1px solid var(--secondary-accent)', background: 'rgba(244, 63, 94, 0.05)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>DPI Credential Loot</h3>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="btn-primary" onClick={() => apiCall('/sniffer/start', 'POST')}>START CAPTURE</button>
+                <button className="btn-primary ghost" onClick={() => apiCall('/sniffer/stop', 'POST')}>STOP</button>
+              </div>
+            </div>
+            <div className="glass-card" style={{ border: '1px solid var(--secondary-accent)', background: 'rgba(244, 63, 94, 0.05)', maxHeight: '200px', overflowY: 'auto' }}>
+              {capturedCreds.length === 0 && <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', padding: '0.5rem' }}>No credentials captured yet. Start capture and generate traffic.</div>}
               {capturedCreds.map((c, i) => (
                 <div key={i} style={{ fontSize: '0.8rem', margin: '0.3rem 0', fontFamily: 'Fira Code' }}>[FOUND] {c}</div>
               ))}
             </div>
             <div style={{ flex: 1, overflowY: 'auto', background: 'rgba(0,0,0,0.4)', padding: '1rem', borderRadius: '12px' }}>
               {packets.map((p, i) => (
-                <div key={i} style={{ fontSize: '0.65rem', margin: '0.2rem 0', color: 'var(--text-secondary)' }}>{p.src} -&gt; {p.dst}</div>
+                <div key={i} style={{ fontSize: '0.65rem', margin: '0.2rem 0', color: 'var(--text-secondary)' }}>{p.src} -&gt; {p.dst} {p.proto ? `[${p.proto}]` : ''} {p.query ? `DNS: ${p.query}` : ''}</div>
               ))}
             </div>
           </div>
@@ -423,7 +430,7 @@ const Dashboard = () => {
               </button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <button className="btn-primary ghost" onClick={() => apiCall('/post_exploit/persistence', 'GET', { os: 'windows' })}>GENERATE PERSISTENCE</button>
+              <button className="btn-primary ghost" onClick={() => apiCall('/post_exploit/persistence?os_type=windows')}>GENERATE PERSISTENCE</button>
               <button className="btn-primary ghost" onClick={() => apiCall('/post_exploit/exfiltrate', 'POST', { target_session_id: activeTarget?.ip })}>HARVEST DATA</button>
             </div>
           </div>
@@ -437,9 +444,10 @@ const Dashboard = () => {
               <span className="status-badge active">{fuzzingStatus}</span>
             </div>
             <p style={{ fontSize: '0.8rem', marginBottom: '1rem' }}>Targeting: {activeTarget?.ip || "None Selected"}</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
               <button className="btn-primary" onClick={async () => { setFuzzingStatus("FUZZING SNMP"); const d = await apiCall('/fuzzer/snmp', 'POST', { ip: activeTarget?.ip }); setFuzzingStatus(d ? "COMPLETE" : "ERROR"); }}>FUZZ SNMP</button>
               <button className="btn-primary" onClick={async () => { setFuzzingStatus("FUZZING MDNS"); const d = await apiCall('/fuzzer/mdns', 'POST', { ip: activeTarget?.ip }); setFuzzingStatus(d ? "COMPLETE" : "ERROR"); }}>FUZZ MDNS</button>
+              <button className="btn-primary" onClick={async () => { setFuzzingStatus("FUZZING UPnP"); const d = await apiCall('/fuzzer/upnp', 'POST', { ip: activeTarget?.ip }); setFuzzingStatus(d ? "COMPLETE" : "ERROR"); }}>FUZZ UPnP</button>
             </div>
           </div>
         );
@@ -497,7 +505,8 @@ const Dashboard = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
               <h3>Vulnerability Scanner</h3>
               <button className="btn-primary" onClick={async () => {
-                const data = await apiCall('/vuln_scan');
+                const target = activeTarget?.ip || '';
+                const data = await apiCall(`/vuln_scan${target ? `?target=${target}` : ''}`);
                 if (data) setStrikeLog(prev => [...prev.slice(-40), `[Vuln-Scanner] Scanning ${data.target}...`]);
               }}>START DEEP ANALYSIS</button>
             </div>
@@ -523,8 +532,9 @@ const Dashboard = () => {
             <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
               <select value={cyberStrikeRole} onChange={e => setCyberStrikeRole(e.target.value)} style={{ background: 'rgba(0,0,0,0.5)', color: 'var(--neo-cyan)', padding: '0.5rem', border: '1px solid var(--glass-border)', borderRadius: '4px' }}>
                 <option value="Shadow">Shadow (Stealth Recon)</option>
-                <option value="Infiltrator">Infiltrator (MITM Proxies)</option>
-                <option value="Ghost">Ghost (Wireless Wardriving)</option>
+                <option value="Infiltrator">Infiltrator (MITM Strike)</option>
+                <option value="Ghost">Ghost (Signal Ghost)</option>
+                <option value="Reaper">Reaper (Full Killchain)</option>
               </select>
               <button className="btn-primary" onClick={async () => {
                 setCyberStrikeLog(prev => [...prev, `[*] Engaging ${cyberStrikeRole} protocol...`]);
@@ -805,7 +815,7 @@ const Dashboard = () => {
             </div>
 
             {/* Row 4: Action Button — always pinned at bottom */}
-            <button className="btn-primary active" style={{ height: '100%', fontSize: '0.7rem', flexShrink: 0 }} onClick={() => apiCall('/cyber_strike/start')}>INVOKE PROTOCOL</button>
+            <button className="btn-primary active" style={{ height: '100%', fontSize: '0.7rem', flexShrink: 0 }} onClick={() => apiCall('/cyber_strike/start', 'POST', { role: cyberStrikeRole })}>INVOKE {cyberStrikeRole.toUpperCase()}</button>
           </aside>
         </div>
       </main>
