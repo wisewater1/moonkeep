@@ -129,6 +129,9 @@ class WardriverPlugin(BasePlugin):
                     ch_m = re.search(r"primary channel: (\d+)", line)
                     if ch_m:
                         current_network["channel"] = int(ch_m.group(1))
+                    if "WPA" in line or "RSN" in line:
+                        current_network["encryption"] = "WPA2" if "RSN" in line else "WPA"
+                        current_network["auth"] = line.strip()
             if current_network and "mac" in current_network:
                 networks.append(current_network)
                 self._log_network(current_network)
@@ -185,8 +188,8 @@ class WardriverPlugin(BasePlugin):
     def _fallback_networks(self):
         """Return demo networks when no wireless adapter is available."""
         return [
-            {"mac": "AA:BB:CC:DD:EE:FF", "ssid": "Demo_Secure", "rssi": -45, "auth": "WPA2", "channel": 6, "lat": 40.7128, "lon": -74.0060},
-            {"mac": "11:22:33:44:55:66", "ssid": "Coffee_Shop", "rssi": -65, "auth": "Open", "channel": 11, "lat": 40.7129, "lon": -74.0061}
+            {"mac": "AA:BB:CC:DD:EE:FF", "ssid": "Demo_Secure", "rssi": -45, "auth": "WPA2", "encryption": "WPA2-PSK", "channel": 6, "lat": 40.7128, "lon": -74.0060},
+            {"mac": "11:22:33:44:55:66", "ssid": "Coffee_Shop", "rssi": -65, "auth": "Open", "encryption": "Open", "channel": 11, "lat": 40.7129, "lon": -74.0061}
         ]
 
     def _log_network(self, net):

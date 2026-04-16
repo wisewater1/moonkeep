@@ -102,8 +102,11 @@ class CampaignManager:
     def save_network(self, campaign_id: str, net: Dict):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
+        bssid = net.get("bssid") or net.get("mac")
+        signal = net.get("signal") or net.get("rssi")
+        encryption = net.get("encryption") or net.get("auth")
         c.execute("INSERT OR REPLACE INTO networks VALUES (?, ?, ?, ?, ?, ?, ?)",
-                  (campaign_id, net.get("bssid"), net.get("ssid"), net.get("channel"), net.get("encryption"), net.get("signal"), time.time()))
+                  (campaign_id, bssid, net.get("ssid"), net.get("channel"), encryption, signal, time.time()))
         conn.commit()
         conn.close()
 

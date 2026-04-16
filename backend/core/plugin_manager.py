@@ -46,7 +46,12 @@ class BasePlugin(ABC):
     def log_event(self, msg: str, type: str = "INFO"):
         """Pipe operational logs to the global event system."""
         if hasattr(self, 'event_queue') and self.event_queue:
-            self.event_queue.put_nowait({"type": type, "msg": f"[{self.name}] {msg}"})
+            payload = {"type": type, "msg": f"[{self.name}] {msg}"}
+            try:
+                loop = asyncio.get_running_loop()
+                loop.call_soon_threadsafe(self.event_queue.put_nowait, payload)
+            except RuntimeError:
+                pass
         print(f"[{self.name}] {msg}")
 
 class PluginManager:

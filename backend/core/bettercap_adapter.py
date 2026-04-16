@@ -755,7 +755,7 @@ class NativeCapEngine:
 
     def _handle_ble_recon(self, parts) -> dict:
         action = parts[1] if len(parts) > 1 else "on"
-        ble = self.plugin_manager.get_plugin("HID-BLE") if self.plugin_manager else None
+        ble = self.plugin_manager.get_plugin("HID-BLE-Strike") if self.plugin_manager else None
         if action == "on":
             self.active_modules.add("ble.recon")
             self._log("BLE recon started — scanning for Bluetooth LE devices...")
@@ -781,7 +781,7 @@ class NativeCapEngine:
 
     def _handle_hid(self, parts) -> dict:
         action = parts[1] if len(parts) > 1 else "show"
-        ble = self.plugin_manager.get_plugin("HID-BLE") if self.plugin_manager else None
+        ble = self.plugin_manager.get_plugin("HID-BLE-Strike") if self.plugin_manager else None
         if action == "on":
             self.active_modules.add("hid")
             self._log("HID injection module active")
