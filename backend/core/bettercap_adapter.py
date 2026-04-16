@@ -338,12 +338,27 @@ class NativeCapEngine:
     #  SHELL EXECUTION
     # ══════════════════════════════════════════════════════════════
 
+    SHELL_ALLOWLIST = {
+        "ip", "ifconfig", "iwconfig", "iw", "arp", "ping", "traceroute",
+        "nslookup", "dig", "host", "netstat", "ss", "whoami", "hostname",
+        "uname", "cat", "ls", "ps", "df", "free", "uptime", "date", "id",
+        "route", "nmap", "curl", "wget",
+    }
+
     def _exec_shell(self, shell_cmd: str) -> dict:
         if not shell_cmd:
             return {"status": "error", "output": "Usage: ! <shell command>"}
+        base_cmd = shell_cmd.split()[0]
+        if base_cmd not in self.SHELL_ALLOWLIST:
+            return {"status": "error", "output": f"Blocked: '{base_cmd}' not in allowlist. Allowed: {', '.join(sorted(self.SHELL_ALLOWLIST))}"}
+        import shlex
+        try:
+            args = shlex.split(shell_cmd)
+        except ValueError as e:
+            return {"status": "error", "output": f"Parse error: {e}"}
         try:
             result = subprocess.run(
-                shell_cmd, shell=True, capture_output=True, text=True, timeout=15
+                args, capture_output=True, text=True, timeout=15
             )
             output = (result.stdout + result.stderr).strip()
             return {"status": "ok", "output": output or "(no output)"}

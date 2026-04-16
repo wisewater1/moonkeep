@@ -11,6 +11,7 @@ import socket
 import asyncio
 import sys
 import json
+import ipaddress
 from pydantic import BaseModel
 from typing import Optional
 
@@ -53,7 +54,15 @@ class TargetStore:
 
 campaign_manager = CampaignManager()
 target_store = TargetStore(campaign_manager)
-event_queue = asyncio.Queue()
+event_queue = asyncio.Queue(maxsize=1000)
+
+
+def _emit(event):
+    """Non-blocking event emit with backpressure — drops when full."""
+    try:
+        _emit(event)
+    except asyncio.QueueFull:
+        pass
 cap_engine = NativeCapEngine()
 connected_clients: set[WebSocket] = set()
 
@@ -145,16 +154,18 @@ async def create_campaign(c: CampaignCreate):
 @app.put("/campaigns/{campaign_id}/activate")
 async def activate_campaign(campaign_id: str):
     if target_store.set_campaign(campaign_id):
-        event_queue.put_nowait({"type": "INFO", "msg": f"[SYSTEM] Workspace switched to {campaign_id}"})
+        _emit({"type": "INFO", "msg": f"[SYSTEM] Workspace switched to {campaign_id}"})
         return {"status": "ok", "active": campaign_id}
     raise HTTPException(status_code=404, detail="Campaign not found")
 
 @app.get("/campaigns/{campaign_id}/report")
-async def export_report(campaign_id: str):
-    report = campaign_manager.export_report(campaign_id)
+async def export_report(campaign_id: str, fmt: str = "markdown"):
+    if fmt not in ("markdown", "json", "csv"):
+        raise HTTPException(status_code=400, detail="Format must be markdown, json, or csv")
+    report = campaign_manager.export_report(campaign_id, fmt=fmt)
     if report == "Campaign not found.":
         raise HTTPException(status_code=404)
-    return {"report": report}
+    return {"report": report, "format": fmt}
 
 # ─── NATIVE CAP ENGINE CLI ────────────────────────────────────────
 class CapCmd(BaseModel):
@@ -198,15 +209,29 @@ async def perform_scan(target: str = ""):
     scanner = plugin_manager.get_plugin("Scanner")
     if not scanner:
         raise HTTPException(status_code=404, detail="Scanner plugin not found")
-    
+
     if not target:
-        if target_store.devices: # Hydrate from store if exists
+        if target_store.devices:
             return {"target": "CACHED", "devices": target_store.devices}
         local_ip = scanner.get_local_ip()
         target = ".".join(local_ip.split(".")[:-1]) + ".0/24"
-    
-    devices = await asyncio.get_running_loop().run_in_executor(None, scanner.scan, target)
-    target_store.update_devices(devices) # PERSIST TO GLOBAL STORE
+
+    try:
+        ipaddress.ip_network(target, strict=False)
+    except ValueError:
+        try:
+            ipaddress.ip_address(target)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid target: {target}. Use IP or CIDR notation.")
+
+    try:
+        devices = await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(None, scanner.scan, target),
+            timeout=120.0
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Scan timed out (120s limit)")
+    target_store.update_devices(devices)
     return {"target": target, "devices": devices}
 
 @app.get("/wifi_scan")
@@ -276,7 +301,7 @@ async def vulnerability_scan(target: str = None):
     vuln_plugin = plugin_manager.get_plugin("Vuln-Scanner")
     if not vuln_plugin:
         raise HTTPException(status_code=404, detail="Vuln-Scanner plugin not found")
-    event_queue.put_nowait({"ts": time.time(), "plugin": "Vuln-Scanner", "type": "INFO", "data": {"msg": f"Initiating deep audit on {target}"}})
+    _emit({"ts": time.time(), "plugin": "Vuln-Scanner", "type": "INFO", "data": {"msg": f"Initiating deep audit on {target}"}})
     asyncio.create_task(vuln_plugin.scan_target(target))
     return {"status": "Analysis in progress", "target": target}
 
@@ -351,7 +376,7 @@ async def pe_exfiltrate(body: ExfilBody):
     plugin = plugin_manager.get_plugin("Post-Exploit")
     if not plugin: raise HTTPException(status_code=404, detail="Post-Exploit plugin not found")
     target = body.target_session_id or (target_store.devices[0].get('ip') if target_store.devices else '192.168.1.1')
-    event_queue.put_nowait({"ts": time.time(), "plugin": "Post-Exploit", "type": "INFO", "data": {"msg": f"Harvesting data from session: {target}"}})
+    _emit({"ts": time.time(), "plugin": "Post-Exploit", "type": "INFO", "data": {"msg": f"Harvesting data from session: {target}"}})
     return {"status": "Exfiltration initiated", "target": target}
 
 @app.get("/post_exploit/persistence")
@@ -367,21 +392,27 @@ class FuzzerTargetBody(BaseModel):
 async def fuzz_mdns(body: FuzzerTargetBody = None):
     plugin = plugin_manager.get_plugin("Fuzzer")
     if not plugin: raise HTTPException(status_code=404)
-    target_ip = (body.ip if body else None) or "224.0.0.251"
+    target_ip = (body.ip if body else None) or target_store.last_target
+    if not target_ip:
+        raise HTTPException(status_code=400, detail="No target specified. Provide {ip} or run /scan first.")
     return await plugin.fuzz_mdns(target_ip)
 
 @app.post("/fuzzer/snmp")
 async def fuzz_snmp(body: FuzzerTargetBody = None):
     plugin = plugin_manager.get_plugin("Fuzzer")
     if not plugin: raise HTTPException(status_code=404)
-    target_ip = (body.ip if body else None) or "127.0.0.1"
+    target_ip = (body.ip if body else None) or target_store.last_target
+    if not target_ip:
+        raise HTTPException(status_code=400, detail="No target specified. Provide {ip} or run /scan first.")
     return await plugin.fuzz_snmp(target_ip)
 
 @app.post("/fuzzer/upnp")
 async def fuzz_upnp(body: FuzzerTargetBody = None):
     plugin = plugin_manager.get_plugin("Fuzzer")
     if not plugin: raise HTTPException(status_code=404)
-    target_ip = (body.ip if body else None) or "239.255.255.250"
+    target_ip = (body.ip if body else None) or target_store.last_target
+    if not target_ip:
+        raise HTTPException(status_code=400, detail="No target specified. Provide {ip} or run /scan first.")
     return await plugin.fuzz_upnp(target_ip)
 
 @app.get("/fuzzer/stats")
@@ -491,7 +522,7 @@ async def wifi_capture(body: WifiCaptureBody):
 async def recon_websocket(websocket: WebSocket):
     await websocket.accept()
     recon_adapter.start()
-    
+
     async def recv_from_ws():
         try:
             while True:
@@ -507,19 +538,22 @@ async def recon_websocket(websocket: WebSocket):
         except Exception:
             pass
 
-    # Run both tasks concurrently
     task1 = asyncio.create_task(recv_from_ws())
     task2 = asyncio.create_task(send_to_ws())
-    
-    done, pending = await asyncio.wait(
-        [task1, task2],
-        return_when=asyncio.FIRST_COMPLETED
-    )
-    
-    for task in pending:
-        task.cancel()
-    
-    print("[Recon WS] Client disconnected")
+    try:
+        done, pending = await asyncio.wait(
+            [task1, task2],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+    finally:
+        recon_adapter.stop()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        print("[Recon WS] Client disconnected, recon-ng process cleaned up")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

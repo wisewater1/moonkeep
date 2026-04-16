@@ -4,6 +4,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import 'xterm/css/xterm.css';
 import './index.css';
 
+const API_BASE = import.meta.env.VITE_API_URL || '';
+const WS_BASE = import.meta.env.VITE_WS_URL || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+
 const ReconTerminal = () => {
   const terminalRef = useRef(null);
   const xtermRef = useRef(null);
@@ -24,7 +27,7 @@ const ReconTerminal = () => {
     // Slight delay to ensure DOM is ready before fitting
     setTimeout(() => fitAddon.fit(), 50);
 
-    const ws = new WebSocket('ws://localhost:8001/ws/recon');
+    const ws = new WebSocket(`${WS_BASE}/ws/recon`);
     wsRef.current = ws;
 
     ws.onmessage = async (e) => {
@@ -136,17 +139,17 @@ const Dashboard = () => {
 
     const boot = async () => {
       try {
-        const res = await fetch('http://localhost:8001/plugins');
+        const res = await fetch(`${API_BASE}/plugins`);
         const data = await res.json();
         setPlugins([...data, { name: 'Recon-Console' }]);
         if (data.length > 0) setActivePlugin(data[0].name);
 
-        const campRes = await fetch('http://localhost:8001/campaigns');
+        const campRes = await fetch(`${API_BASE}/campaigns`);
         const campData = await campRes.json();
         setCampaigns(campData);
 
         // Hydrate targets from backend store
-        fetch('http://localhost:8001/scan').then(r => r.json()).then(d => {
+        fetch(`${API_BASE}/scan`).then(r => r.json()).then(d => {
           if (d.devices && d.devices.length > 0) {
             setDevices(d.devices);
             setActiveTarget(d.devices[0]);
@@ -158,7 +161,7 @@ const Dashboard = () => {
     };
     boot();
 
-    ws.current = new WebSocket('ws://localhost:8001/ws');
+    ws.current = new WebSocket(`${WS_BASE}/ws`);
     ws.current.onmessage = (e) => {
       const data = JSON.parse(e.data);
       if (data.plugin && data.ts) {
@@ -198,10 +201,10 @@ const Dashboard = () => {
     if (!activePlugin) return;
     const poll = setInterval(() => {
       if (activePlugin === "AI-Orchestrator") {
-        fetch('http://localhost:8001/graph').then(r => r.json()).then(setGraphData).catch(() => { });
+        fetch(`${API_BASE}/graph`).then(r => r.json()).then(setGraphData).catch(() => { });
       }
       if (activePlugin === "Sniffer") {
-        fetch('http://localhost:8001/sniffer/credentials').then(r => r.json()).then(d => setCapturedCreds(d.credentials || [])).catch(() => { });
+        fetch(`${API_BASE}/sniffer/credentials`).then(r => r.json()).then(d => setCapturedCreds(d.credentials || [])).catch(() => { });
       }
     }, 4000);
     return () => clearInterval(poll);
@@ -210,10 +213,10 @@ const Dashboard = () => {
   // Bettercap status polling
   useEffect(() => {
     const pollBcap = setInterval(() => {
-      fetch('http://localhost:8001/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
+      fetch(`${API_BASE}/bettercap/status`).then(r => r.json()).then(setBcapStatus).catch(() => { });
     }, 5000);
     // Initial check
-    fetch('http://localhost:8001/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
+    fetch('${API_BASE}/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
     return () => clearInterval(pollBcap);
   }, []);
 
@@ -228,7 +231,7 @@ const Dashboard = () => {
     setCliOutput(prev => [...prev, { text: `❯ ${cmd}`, color: '#a78bfa', bold: true }]);
     setStrikeLog(prev => [...prev.slice(-40), `[cap] > ${cmd}`]);
     try {
-      const res = await fetch('http://localhost:8001/bettercap/command', {
+      const res = await fetch(`${API_BASE}/bettercap/command`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cmd })
@@ -269,7 +272,7 @@ const Dashboard = () => {
         options.headers = { 'Content-Type': 'application/json' };
         options.body = JSON.stringify(body);
       }
-      const res = await fetch(`http://localhost:8001${endpoint}`, options);
+      const res = await fetch(`${API_BASE}${endpoint}`, options);
       const data = await res.json();
       setStrikeLog(prev => [...prev.slice(-40), `[<] SUCCESS: ${endpoint}`, `[#] DATA: ${JSON.stringify(data).slice(0, 100)}...`]);
       return data;
@@ -281,7 +284,7 @@ const Dashboard = () => {
 
   const handleExportReport = async () => {
     try {
-      const res = await fetch(`http://localhost:8001/campaigns/${activeCampaign}/report`);
+      const res = await fetch(`${API_BASE}/campaigns/${activeCampaign}/report`);
       const data = await res.json();
       if (data.report) {
         const blob = new Blob([data.report], { type: 'text/markdown' });

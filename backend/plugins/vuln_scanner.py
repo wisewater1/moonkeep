@@ -110,20 +110,24 @@ class VulnScannerPlugin(BasePlugin):
         """Check if a specific port is open and grab its banner for version matching."""
         port = vuln["port"]
         try:
-            conn = asyncio.open_connection(ip, port)
+            if service == "HTTPS":
+                ssl_ctx = ssl.create_default_context()
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = ssl.CERT_NONE
+                conn = asyncio.open_connection(ip, port, ssl=ssl_ctx)
+            else:
+                conn = asyncio.open_connection(ip, port)
             reader, writer = await asyncio.wait_for(conn, timeout=2.0)
 
-            # Banner grabbing
             banner = ""
             try:
-                # Send probe based on service type
-                if service == "HTTP":
+                if service in ("HTTP", "HTTPS"):
                     writer.write(f"HEAD / HTTP/1.0\r\nHost: {ip}\r\n\r\n".encode())
                     await writer.drain()
                 elif service == "FTP":
-                    pass  # FTP sends banner on connect
+                    pass
                 elif service == "SMTP":
-                    pass  # SMTP sends banner on connect
+                    pass
 
                 banner_data = await asyncio.wait_for(reader.read(1024), timeout=3.0)
                 banner = banner_data.decode('utf-8', errors='ignore').strip()
