@@ -8,10 +8,8 @@ import asyncio
 import threading
 import time
 import socket
-import struct
 import subprocess
 import platform
-import re
 import os
 
 
@@ -600,7 +598,9 @@ class NativeCapEngine:
         lines = [f"{'SSID':22s} {'BSSID':18s} {'RSSI':6s} {'CH':4s} {'ENC':10s}",
                  "─" * 62]
         for n in self.target_store.networks:
-            lines.append(f"{n.get('ssid', 'HIDDEN'):22s} {n.get('mac', '?'):18s} {str(n.get('rssi', '?')):6s} {str(n.get('channel', '?')):4s} {n.get('encryption', '?'):10s}")
+            bssid = n.get('bssid') or n.get('mac') or '?'
+            signal = n.get('rssi') or n.get('signal') or '?'
+            lines.append(f"{n.get('ssid', 'HIDDEN'):22s} {bssid:18s} {str(signal):6s} {str(n.get('channel', '?')):4s} {n.get('encryption', '?'):10s}")
         return {"status": "ok", "output": "\n".join(lines)}
 
     # ══════════════════════════════════════════════════════════════
@@ -777,7 +777,10 @@ class NativeCapEngine:
             if ble:
                 def _scan():
                     try:
-                        devices = ble.scan()
+                        import asyncio as _aio
+                        _loop = _aio.new_event_loop()
+                        devices = _loop.run_until_complete(ble.scan_ble())
+                        _loop.close()
                         self._log(f"BLE: {len(devices)} devices found")
                         for d in devices:
                             self._log(f"  → {d.get('name', '?')} [{d.get('mac', '?')}] RSSI: {d.get('rssi', '?')}")

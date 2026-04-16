@@ -46,35 +46,42 @@ class ProxyPlugin(BasePlugin):
         while self.running and self.server:
             try:
                 client_sock, addr = self.server.accept()
-                threading.Thread(target=self._handle_client, args=(client_sock,)).start()
-            except:
+                threading.Thread(target=self._handle_client, args=(client_sock,), daemon=True).start()
+            except Exception:
                 break
 
     def _handle_client(self, client_sock):
+        remote_sock = None
         try:
             request = client_sock.recv(4096)
             if not request:
                 client_sock.close()
                 return
 
-            # Basic parsing to find host
             lines = request.decode('utf-8', errors='ignore').split('\n')
             host = ""
+            port = 80
             for line in lines:
-                if line.startswith("Host:"):
-                    host = line.split(":")[1].strip()
+                if line.lower().startswith("host:"):
+                    host_val = line.split(":", 1)[1].strip()
+                    if ":" in host_val and not host_val.startswith("["):
+                        host, port_str = host_val.rsplit(":", 1)
+                        try:
+                            port = int(port_str)
+                        except ValueError:
+                            host = host_val
+                    else:
+                        host = host_val
                     break
-            
+
             if not host:
                 client_sock.close()
                 return
 
-            # Connect to remote server
             remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            remote_sock.connect((host, 80))
+            remote_sock.connect((host, port))
             remote_sock.sendall(request)
 
-            # Simple relay
             while self.running:
                 r, w, x = select.select([client_sock, remote_sock], [], [], 1)
                 if client_sock in r:
@@ -84,7 +91,6 @@ class ProxyPlugin(BasePlugin):
                 if remote_sock in r:
                     data = remote_sock.recv(4096)
                     if not data: break
-                    # Potential for script manipulation here
                     if self.script:
                         data = self._apply_script(data)
                     client_sock.sendall(data)
@@ -93,8 +99,11 @@ class ProxyPlugin(BasePlugin):
             print(f"Proxy error: {e}")
         finally:
             client_sock.close()
-            try: remote_sock.close()
-            except: pass
+            if remote_sock:
+                try:
+                    remote_sock.close()
+                except Exception:
+                    pass
 
     def _apply_script(self, data):
         # Placeholder for scripting logic

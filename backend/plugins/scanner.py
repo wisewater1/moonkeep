@@ -3,7 +3,6 @@ from scapy.all import ARP, Ether, srp, conf
 import socket
 import subprocess
 import re
-import struct
 import time
 
 # Compact OUI prefix table — top vendors seen in pentests

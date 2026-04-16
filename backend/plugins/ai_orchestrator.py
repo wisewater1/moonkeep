@@ -10,12 +10,10 @@ class AIOrchestratorPlugin(BasePlugin):
         self._init_db()
 
     def _init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, type TEXT, data TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS edges (source TEXT, target TEXT, type TEXT)''')
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute('''CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, type TEXT, data TEXT)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS edges (source TEXT, target TEXT, type TEXT)''')
 
     @property
     def name(self) -> str:
@@ -36,27 +34,23 @@ class AIOrchestratorPlugin(BasePlugin):
         """
         Update Knowledge Graph and provide strategic insights.
         """
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        
         insights = []
-        for d in devices:
-            ip = d.get("ip")
-            if ip:
-                c.execute("INSERT OR REPLACE INTO nodes VALUES (?, ?, ?)", (ip, "DEVICE", str(d)))
-                
-                if ".155" in ip or "192.168" in ip:
-                    insights.append(f"Node {ip}: Identified as high-value target. Suggesting deep port scan.")
-                    c.execute("INSERT OR REPLACE INTO edges VALUES (?, ?, ?)", (ip, f"vuln_{ip}", "HAS_VULN"))
-                
-                vendor = (d.get("vendor") or "").lower()
-                if "apple" in vendor:
-                    insights.append(f"Node {ip}: Apple device detected. Analyzing for MDNS/AirPlay vulnerabilities.")
-                elif "espressif" in vendor:
-                    insights.append(f"Node {ip}: IoT Device (Espressif). High probability of default credentials.")
-        
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            for d in devices:
+                ip = d.get("ip")
+                if ip:
+                    c.execute("INSERT OR REPLACE INTO nodes VALUES (?, ?, ?)", (ip, "DEVICE", str(d)))
+
+                    if ".155" in ip or "192.168" in ip:
+                        insights.append(f"Node {ip}: Identified as high-value target. Suggesting deep port scan.")
+                        c.execute("INSERT OR REPLACE INTO edges VALUES (?, ?, ?)", (ip, f"vuln_{ip}", "HAS_VULN"))
+
+                    vendor = (d.get("vendor") or "").lower()
+                    if "apple" in vendor:
+                        insights.append(f"Node {ip}: Apple device detected. Analyzing for MDNS/AirPlay vulnerabilities.")
+                    elif "espressif" in vendor:
+                        insights.append(f"Node {ip}: IoT Device (Espressif). High probability of default credentials.")
         return insights
 
     async def plan_attack(self, instruction: str, context: dict):
@@ -119,8 +113,8 @@ class AIOrchestratorPlugin(BasePlugin):
 
                 # Route to the right invocation based on action name
                 if action == "scan":
-                    target_ip = ""
-                    if hasattr(self, 'target_store') and self.target_store.last_target:
+                    target_ip = "192.168.1.0/24"
+                    if hasattr(self, 'target_store') and self.target_store and self.target_store.last_target:
                         base = self.target_store.last_target.rsplit('.', 1)[0]
                         target_ip = f"{base}.0/24"
                     result = await asyncio.get_running_loop().run_in_executor(None, plugin.scan, target_ip)
@@ -145,7 +139,15 @@ class AIOrchestratorPlugin(BasePlugin):
                 elif action == "scan_wifi":
                     networks = plugin.scan_wifi()
                     self.emit("INFO", {"msg": f"Step {step_num}: Found {len(networks)} networks"})
-                elif action in ("start", "fuzz_snmp", "fuzz_mdns", "fuzz_upnp"):
+                elif action in ("fuzz_snmp", "fuzz_mdns", "fuzz_upnp"):
+                    target = self.target_store.last_target if hasattr(self, 'target_store') and self.target_store else None
+                    if target:
+                        await method(target)
+                    else:
+                        self.emit("ERROR", {"msg": f"Step {step_num}: No target for fuzzing"})
+                        continue
+                    self.emit("INFO", {"msg": f"Step {step_num}: {plugin_name} fuzzing {target}"})
+                elif action == "start":
                     if asyncio.iscoroutinefunction(method):
                         await method()
                     else:
@@ -168,11 +170,10 @@ class AIOrchestratorPlugin(BasePlugin):
         """
         Return graph for D3.js visualization.
         """
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("SELECT id, type FROM nodes")
-        nodes = [{"id": row[0], "type": row[1]} for row in c.fetchall()]
-        c.execute("SELECT source, target, type FROM edges")
-        links = [{"source": row[0], "target": row[1], "type": row[2]} for row in c.fetchall()]
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT id, type FROM nodes")
+            nodes = [{"id": row[0], "type": row[1]} for row in c.fetchall()]
+            c.execute("SELECT source, target, type FROM edges")
+            links = [{"source": row[0], "target": row[1], "type": row[2]} for row in c.fetchall()]
         return {"nodes": nodes, "links": links}

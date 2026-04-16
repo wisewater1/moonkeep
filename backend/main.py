@@ -60,7 +60,7 @@ event_queue = asyncio.Queue(maxsize=1000)
 def _emit(event):
     """Non-blocking event emit with backpressure — drops when full."""
     try:
-        _emit(event)
+        event_queue.put_nowait(event)
     except asyncio.QueueFull:
         pass
 cap_engine = NativeCapEngine()
@@ -162,9 +162,10 @@ async def activate_campaign(campaign_id: str):
 async def export_report(campaign_id: str, fmt: str = "markdown"):
     if fmt not in ("markdown", "json", "csv"):
         raise HTTPException(status_code=400, detail="Format must be markdown, json, or csv")
+    campaign = campaign_manager.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
     report = campaign_manager.export_report(campaign_id, fmt=fmt)
-    if report == "Campaign not found.":
-        raise HTTPException(status_code=404)
     return {"report": report, "format": fmt}
 
 # ─── NATIVE CAP ENGINE CLI ────────────────────────────────────────
@@ -237,9 +238,8 @@ async def perform_scan(target: str = ""):
 @app.get("/wifi_scan")
 async def perform_wifi_scan():
     # Automatically turn on wifi.recon 
-    engine2 = plugin_manager.get_plugin("NativeCapEngine") or NativeCapEngine()
-    engine2.run_command("wifi.recon on")
-    await asyncio.sleep(2) # brief pause to let it scan
+    cap_engine.run_command("wifi.recon on")
+    await asyncio.sleep(2)
 
     wardriver = plugin_manager.get_plugin("Wardriver")
     networks = []
@@ -254,8 +254,7 @@ class WifiDeauthBody(BaseModel):
 
 @app.post("/wifi/deauth")
 async def wifi_deauth(body: WifiDeauthBody):
-    engine2 = plugin_manager.get_plugin("NativeCapEngine") or NativeCapEngine()
-    res = engine2.run_command(f"wifi.deauth {body.target}")
+    res = cap_engine.run_command(f"wifi.deauth {body.target}")
     return res
 
 class WifiBSSIDBody(BaseModel):
@@ -263,8 +262,7 @@ class WifiBSSIDBody(BaseModel):
 
 @app.post("/wifi/capture_passive")
 async def wifi_capture_passive(body: WifiBSSIDBody):
-    engine2 = plugin_manager.get_plugin("NativeCapEngine") or NativeCapEngine()
-    engine2.run_command("wifi.recon on")
+    cap_engine.run_command("wifi.recon on")
     return {"status": "ok", "message": f"Listening for handshakes from {body.bssid} (check logs folder)"}
 
 # SECRET HUNTER ELITE ENDPOINTS
