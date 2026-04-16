@@ -91,7 +91,11 @@ class CyberStrikePlugin(BasePlugin):
                 if method and callable(method):
                     # Prepare arguments based on action type
                     if action == "scan":
-                        result = await asyncio.get_running_loop().run_in_executor(None, plugin.scan, "")
+                        target_ip = "192.168.1.0/24"
+                        if hasattr(self, 'target_store') and self.target_store and self.target_store.last_target:
+                            base = self.target_store.last_target.rsplit('.', 1)[0]
+                            target_ip = f"{base}.0/24"
+                        result = await asyncio.get_running_loop().run_in_executor(None, plugin.scan, target_ip)
                         if result and hasattr(self, 'target_store'):
                             self.target_store.update_devices(result)
                         self.log.append(f"[+] Discovered {len(result) if result else 0} hosts")

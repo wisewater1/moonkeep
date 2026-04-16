@@ -1,32 +1,41 @@
 import core.scapy_init  # noqa: F401 — must be first to patch scapy IPv6 routes
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from core.plugin_manager import PluginManager
 from core.bettercap_adapter import NativeCapEngine
 from core.campaign_manager import CampaignManager
 from core.recon_adapter import recon_adapter
+from core.auth import (
+    init_auth_db, authenticate, create_token, create_user,
+    get_current_user, require_admin, log_audit, get_audit_log,
+    list_users, change_password, delete_user, decode_token,
+)
 import os
 import time
 import socket
 import asyncio
-import sys
-import json
 import ipaddress
 from pydantic import BaseModel
 from typing import Optional
 
-# Global State Management
+
+# ─── GLOBAL STATE ────────────────────────────────────────────────
+
 class TargetStore:
     def __init__(self, cm: CampaignManager):
         self.cm = cm
         self.active_campaign = "default"
         if not self.cm.get_campaign("default"):
             self.cm.create_campaign("default", "Default Workspace", "Standard session limits", "192.168.0.0/16")
-            
         self.devices = self.cm.load_devices("default")
         self.networks = self.cm.load_networks("default")
         self.credentials = self.cm.load_credentials("default")
-        self.last_target = self.devices[0].get('ip') if self.devices else None
+        self.last_target = self.devices[0].get("ip") if self.devices else None
         self.active_interface = None
 
     def set_campaign(self, campaign_id: str):
@@ -36,21 +45,25 @@ class TargetStore:
         self.devices = self.cm.load_devices(campaign_id)
         self.networks = self.cm.load_networks(campaign_id)
         self.credentials = self.cm.load_credentials(campaign_id)
-        self.last_target = self.devices[0].get('ip') if self.devices else None
+        self.last_target = self.devices[0].get("ip") if self.devices else None
         return True
 
     def update_devices(self, devices):
         self.devices = devices
-        if devices: self.last_target = devices[0].get('ip')
-        for d in devices: self.cm.save_device(self.active_campaign, d)
+        if devices:
+            self.last_target = devices[0].get("ip")
+        for d in devices:
+            self.cm.save_device(self.active_campaign, d)
 
     def update_networks(self, networks):
         self.networks = networks
-        for n in networks: self.cm.save_network(self.active_campaign, n)
+        for n in networks:
+            self.cm.save_network(self.active_campaign, n)
 
     def save_credential(self, plugin: str, content: str):
         self.credentials.append({"plugin": plugin, "content": content, "ts": time.time()})
         self.cm.save_credential(self.active_campaign, plugin, content)
+
 
 campaign_manager = CampaignManager()
 target_store = TargetStore(campaign_manager)
@@ -58,13 +71,15 @@ event_queue = asyncio.Queue(maxsize=1000)
 
 
 def _emit(event):
-    """Non-blocking event emit with backpressure — drops when full."""
     try:
         event_queue.put_nowait(event)
     except asyncio.QueueFull:
         pass
+
+
 cap_engine = NativeCapEngine()
 connected_clients: set[WebSocket] = set()
+
 
 async def broadcast_events():
     while True:
@@ -90,50 +105,159 @@ try:
 except Exception as e:
     print(f"Elite module discovery error: {e}")
 
-app = FastAPI(title="Moonkeep Elite API")
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(broadcast_events())
+# ─── PLUGIN INIT ─────────────────────────────────────────────────
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Initialize Plugin Manager
 PLUGINS_DIR = os.path.join(os.path.dirname(__file__), "plugins")
 plugin_manager = PluginManager(PLUGINS_DIR)
 plugin_manager.load_plugins()
 
-# Inject state into all plugins for real-time telemetry and persistence
 for plugin in plugin_manager.plugins.values():
     plugin.event_queue = event_queue
     plugin.target_store = target_store
     plugin.bettercap = cap_engine
 
-# Wire the native engine to the plugin system
 cap_engine.inject(plugin_manager, event_queue, target_store)
 print("NativeCapEngine online — type 'help' in the CLI")
+
+
+# ─── APP + LIFESPAN ──────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_auth_db()
+    asyncio.create_task(broadcast_events())
+    _emit({"type": "INFO", "msg": "[SYSTEM] Moonkeep Elite v2 online"})
+    yield
+    recon_adapter.stop()
+    print("[SYSTEM] Moonkeep shutdown complete")
+
+
+limiter = Limiter(key_func=get_remote_address)
+app = FastAPI(title="Moonkeep Elite API", version="2.0.0", lifespan=lifespan)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Slow down."})
+
+
+ALLOWED_ORIGINS = os.environ.get("MOONKEEP_CORS_ORIGINS", "*").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+PUBLIC_PATHS = {
+    "/auth/login", "/auth/register", "/auth/status",
+    "/docs", "/openapi.json", "/redoc",
+}
+
+
+@app.middleware("http")
+async def auth_audit_middleware(request: Request, call_next):
+    path = request.url.path
+    if path in PUBLIC_PATHS or path.startswith("/ws"):
+        return await call_next(request)
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+    payload = decode_token(auth_header[7:])
+    if not payload:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+    request.state.user = payload
+    log_audit(payload["sub"], "API_CALL", path, request.method, request.client.host if request.client else "unknown")
+    return await call_next(request)
+
+
+# ─── AUTH ENDPOINTS ──────────────────────────────────────────────
+
+class LoginBody(BaseModel):
+    username: str
+    password: str
+
+
+class RegisterBody(BaseModel):
+    username: str
+    password: str
+    role: str = "operator"
+
+
+class ChangePasswordBody(BaseModel):
+    old_password: str
+    new_password: str
+
+
+@app.post("/auth/login")
+@limiter.limit("10/minute")
+async def login(request: Request, body: LoginBody):
+    user = authenticate(body.username, body.password)
+    if not user:
+        log_audit(body.username, "LOGIN_FAILED", "/auth/login", "POST", request.client.host if request.client else "unknown")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = create_token(user["username"], user["role"])
+    log_audit(user["username"], "LOGIN_SUCCESS", "/auth/login", "POST", request.client.host if request.client else "unknown")
+    return {"token": token, "username": user["username"], "role": user["role"]}
+
+
+@app.post("/auth/register")
+@limiter.limit("5/minute")
+async def register(request: Request, body: RegisterBody, admin: dict = Depends(require_admin)):
+    user = create_user(body.username, body.password, body.role)
+    return {"status": "created", **user}
+
+
+@app.get("/auth/status")
+async def auth_status():
+    return {"auth_enabled": True, "version": "2.0.0"}
+
+
+@app.get("/auth/me")
+async def auth_me(user: dict = Depends(get_current_user)):
+    return user
+
+
+@app.post("/auth/change_password")
+async def auth_change_password(body: ChangePasswordBody, user: dict = Depends(get_current_user)):
+    if not change_password(user["username"], body.old_password, body.new_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    return {"status": "password changed"}
+
+
+@app.get("/admin/users")
+async def admin_list_users(admin: dict = Depends(require_admin)):
+    return list_users()
+
+
+@app.delete("/admin/users/{username}")
+async def admin_delete_user(username: str, admin: dict = Depends(require_admin)):
+    if username == admin["username"]:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    delete_user(username)
+    return {"status": "deleted", "username": username}
+
+
+@app.get("/admin/audit")
+async def admin_audit_log(limit: int = 100, admin: dict = Depends(require_admin)):
+    return get_audit_log(limit)
+
+
+# ─── SYSTEM ENDPOINTS ────────────────────────────────────────────
 
 @app.get("/interfaces")
 def list_interfaces():
     from scapy.all import conf
-    ifaces = []
-    for iface in conf.ifaces.values():
-        ifaces.append({
-            "name": iface.name,
-            "description": iface.description,
-            "ip": iface.ip
-        })
-    return ifaces
+    return [{"name": i.name, "description": i.description, "ip": i.ip} for i in conf.ifaces.values()]
+
 
 @app.get("/plugins")
-def list_plugins():
+def list_plugins_route():
     return plugin_manager.list_plugins()
+
 
 # ─── CAMPAIGN ENDPOINTS ──────────────────────────────────────────
 
@@ -141,15 +265,18 @@ def list_plugins():
 async def list_campaigns():
     return campaign_manager.list_campaigns()
 
+
 class CampaignCreate(BaseModel):
     id: str
     name: str
     description: str
     scope: str
 
+
 @app.post("/campaigns")
-async def create_campaign(c: CampaignCreate):
+async def create_campaign_route(c: CampaignCreate):
     return campaign_manager.create_campaign(c.id, c.name, c.description, c.scope)
+
 
 @app.put("/campaigns/{campaign_id}/activate")
 async def activate_campaign(campaign_id: str):
@@ -157,6 +284,7 @@ async def activate_campaign(campaign_id: str):
         _emit({"type": "INFO", "msg": f"[SYSTEM] Workspace switched to {campaign_id}"})
         return {"status": "ok", "active": campaign_id}
     raise HTTPException(status_code=404, detail="Campaign not found")
+
 
 @app.get("/campaigns/{campaign_id}/report")
 async def export_report(campaign_id: str, fmt: str = "markdown"):
@@ -168,9 +296,12 @@ async def export_report(campaign_id: str, fmt: str = "markdown"):
     report = campaign_manager.export_report(campaign_id, fmt=fmt)
     return {"report": report, "format": fmt}
 
-# ─── NATIVE CAP ENGINE CLI ────────────────────────────────────────
+
+# ─── NATIVE CAP ENGINE CLI ──────────────────────────────────────
+
 class CapCmd(BaseModel):
     cmd: str
+
 
 @app.get("/bettercap/status")
 def cap_status():
@@ -178,25 +309,31 @@ def cap_status():
         "installed": True,
         "running": cap_engine.is_running(),
         "api_url": "native://moonkeep",
-        "active_modules": list(cap_engine.active_modules)
+        "active_modules": list(cap_engine.active_modules),
     }
+
 
 @app.post("/bettercap/start")
 def cap_start():
     return {"status": "ok", "msg": "Native engine is always running."}
 
+
 @app.post("/bettercap/stop")
 def cap_stop():
     return {"status": "ok", "msg": "Native engine cannot be stopped."}
 
+
 @app.post("/bettercap/command")
 def cap_command(body: CapCmd):
-    result = cap_engine.run_command(body.cmd)
-    return result
+    return cap_engine.run_command(body.cmd)
+
 
 @app.get("/bettercap/session")
 def cap_session():
     return cap_engine._show_info()
+
+
+# ─── GRAPH / SCAN ────────────────────────────────────────────────
 
 @app.get("/graph")
 def get_attack_graph():
@@ -205,18 +342,18 @@ def get_attack_graph():
         return {"nodes": [], "links": []}
     return ai.get_graph_data()
 
+
 @app.get("/scan")
-async def perform_scan(target: str = ""):
+@limiter.limit("10/minute")
+async def perform_scan(request: Request, target: str = ""):
     scanner = plugin_manager.get_plugin("Scanner")
     if not scanner:
         raise HTTPException(status_code=404, detail="Scanner plugin not found")
-
     if not target:
         if target_store.devices:
             return {"target": "CACHED", "devices": target_store.devices}
         local_ip = scanner.get_local_ip()
         target = ".".join(local_ip.split(".")[:-1]) + ".0/24"
-
     try:
         ipaddress.ip_network(target, strict=False)
     except ValueError:
@@ -224,74 +361,111 @@ async def perform_scan(target: str = ""):
             ipaddress.ip_address(target)
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid target: {target}. Use IP or CIDR notation.")
-
     try:
         devices = await asyncio.wait_for(
             asyncio.get_running_loop().run_in_executor(None, scanner.scan, target),
-            timeout=120.0
+            timeout=120.0,
         )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Scan timed out (120s limit)")
     target_store.update_devices(devices)
     return {"target": target, "devices": devices}
 
+
 @app.get("/wifi_scan")
 async def perform_wifi_scan():
-    # Automatically turn on wifi.recon 
     cap_engine.run_command("wifi.recon on")
     await asyncio.sleep(2)
-
     wardriver = plugin_manager.get_plugin("Wardriver")
     networks = []
     if wardriver:
         networks = wardriver.scan_wifi()
-        target_store.update_networks(networks) # PERSIST TO GLOBAL STORE
+        target_store.update_networks(networks)
     return {"networks": networks}
+
+
+# ─── WIFI ENDPOINTS ──────────────────────────────────────────────
 
 class WifiDeauthBody(BaseModel):
     target: str = "ff:ff:ff:ff:ff:ff"
     ap: str
 
+
 @app.post("/wifi/deauth")
 async def wifi_deauth(body: WifiDeauthBody):
-    res = cap_engine.run_command(f"wifi.deauth {body.target}")
-    return res
+    return cap_engine.run_command(f"wifi.deauth {body.target}")
+
 
 class WifiBSSIDBody(BaseModel):
     bssid: str
 
+
 @app.post("/wifi/capture_passive")
 async def wifi_capture_passive(body: WifiBSSIDBody):
     cap_engine.run_command("wifi.recon on")
-    return {"status": "ok", "message": f"Listening for handshakes from {body.bssid} (check logs folder)"}
+    return {"status": "ok", "message": f"Listening for handshakes from {body.bssid}"}
 
-# SECRET HUNTER ELITE ENDPOINTS
+
+@app.get("/wifi/handshakes")
+async def wifi_handshakes():
+    plugin = plugin_manager.get_plugin("WiFi-Strike")
+    if not plugin:
+        raise HTTPException(status_code=404)
+    return {"handshakes": plugin.get_handshakes()}
+
+
+@app.post("/wifi/pmkid")
+async def wifi_pmkid(body: WifiBSSIDBody):
+    plugin = plugin_manager.get_plugin("WiFi-Strike")
+    if not plugin:
+        raise HTTPException(status_code=404)
+    return await plugin.pmkid_capture(body.bssid)
+
+
+class WifiCaptureBody(BaseModel):
+    bssid: str
+
+
+@app.post("/wifi/capture")
+async def wifi_capture(body: WifiCaptureBody):
+    p = plugin_manager.get_plugin("WiFi-Strike")
+    if not p:
+        raise HTTPException(status_code=404)
+    return await p.capture_handshake(body.bssid)
+
+
+# ─── SECRET HUNTER ───────────────────────────────────────────────
+
 @app.post("/secret_hunter/hunt")
 async def secret_hunter_start():
     plugin = plugin_manager.get_plugin("Secret-Hunter")
-    if not plugin: raise HTTPException(status_code=404)
+    if not plugin:
+        raise HTTPException(status_code=404)
     findings = await plugin.hunt()
     return {"status": "Hunt complete", "findings": findings}
+
 
 @app.get("/secret_hunter/results")
 async def secret_hunter_results():
     plugin = plugin_manager.get_plugin("Secret-Hunter")
-    if not plugin: raise HTTPException(status_code=404)
-    return {"findings": getattr(plugin, 'last_findings', [])}
+    if not plugin:
+        raise HTTPException(status_code=404)
+    return {"findings": getattr(plugin, "last_findings", [])}
+
+
+# ─── VULN SCANNER ────────────────────────────────────────────────
 
 @app.get("/vuln_scan")
-async def vulnerability_scan(target: str = None):
+@limiter.limit("5/minute")
+async def vulnerability_scan(request: Request, target: str = None):
     if not target:
         target = target_store.last_target
     if not target:
-        # Auto-discover local subnet target
         scanner = plugin_manager.get_plugin("Scanner")
         if scanner:
-            local_ip = scanner.get_local_ip()
-            target = local_ip
+            target = scanner.get_local_ip()
         else:
-            raise HTTPException(status_code=400, detail="No target specified. Run /scan first or provide ?target=X.X.X.X")
-    # Validate IP
+            raise HTTPException(status_code=400, detail="No target specified")
     try:
         socket.inet_aton(target)
     except socket.error:
@@ -303,9 +477,12 @@ async def vulnerability_scan(target: str = None):
     asyncio.create_task(vuln_plugin.scan_target(target))
     return {"status": "Analysis in progress", "target": target}
 
-# CYBER STRIKE ENDPOINTS
+
+# ─── CYBER STRIKE ────────────────────────────────────────────────
+
 class CyberStrikeBody(BaseModel):
     role: str
+
 
 @app.post("/cyber_strike/start")
 async def cyber_strike_start(body: CyberStrikeBody):
@@ -314,20 +491,26 @@ async def cyber_strike_start(body: CyberStrikeBody):
         asyncio.create_task(plugin.start(role=body.role, plugin_manager=plugin_manager))
     return {"status": f"Invoked {body.role}"}
 
+
 @app.post("/cyber_strike/stop")
 async def cyber_strike_stop():
     plugin = plugin_manager.get_plugin("Cyber-Strike")
-    if plugin: await plugin.stop()
+    if plugin:
+        await plugin.stop()
     return {"status": "Stopped"}
+
 
 @app.get("/cyber_strike/status")
 async def cyber_strike_status():
     plugin = plugin_manager.get_plugin("Cyber-Strike")
-    return {"status": plugin.status if plugin else "IDLE", "log": getattr(plugin, 'log', [])}
+    return {"status": plugin.status if plugin else "IDLE", "log": getattr(plugin, "log", [])}
 
-# AI ORCHESTRATOR ENDPOINTS
+
+# ─── AI ORCHESTRATOR ─────────────────────────────────────────────
+
 class AIAnalyzeBody(BaseModel):
     instruction: str
+
 
 @app.post("/ai/command")
 async def ai_command(body: AIAnalyzeBody):
@@ -338,8 +521,10 @@ async def ai_command(body: AIAnalyzeBody):
         return {"status": "Command parsed", "plan": plan}
     return {"status": "Error", "plan": []}
 
+
 class AIExecuteBody(BaseModel):
     plan: list
+
 
 @app.post("/ai/execute")
 async def ai_execute(body: AIExecuteBody):
@@ -347,6 +532,7 @@ async def ai_execute(body: AIExecuteBody):
     if plugin:
         asyncio.create_task(plugin.execute_plan(body.plan, plugin_manager))
     return {"status": "Executing Sequence"}
+
 
 @app.post("/ai/analyze")
 async def ai_analyze():
@@ -356,124 +542,146 @@ async def ai_analyze():
         return {"insights": insights}
     return {"insights": []}
 
-# POST-EXPLOIT ELITE ENDPOINTS
+
+# ─── POST-EXPLOIT ────────────────────────────────────────────────
+
 class PivotBody(BaseModel):
     target_ip: str
+
 
 @app.post("/post_exploit/pivot")
 async def pe_pivot(body: PivotBody):
     plugin = plugin_manager.get_plugin("Post-Exploit")
-    if not plugin: raise HTTPException(status_code=404, detail="Post-Exploit plugin not found")
+    if not plugin:
+        raise HTTPException(status_code=404, detail="Post-Exploit plugin not found")
     return await plugin.pivot_scan(body.target_ip)
+
 
 class ExfilBody(BaseModel):
     target_session_id: Optional[str] = None
 
+
 @app.post("/post_exploit/exfiltrate")
 async def pe_exfiltrate(body: ExfilBody):
     plugin = plugin_manager.get_plugin("Post-Exploit")
-    if not plugin: raise HTTPException(status_code=404, detail="Post-Exploit plugin not found")
-    target = body.target_session_id or (target_store.devices[0].get('ip') if target_store.devices else '192.168.1.1')
+    if not plugin:
+        raise HTTPException(status_code=404, detail="Post-Exploit plugin not found")
+    target = body.target_session_id or (target_store.devices[0].get("ip") if target_store.devices else "192.168.1.1")
     _emit({"ts": time.time(), "plugin": "Post-Exploit", "type": "INFO", "data": {"msg": f"Harvesting data from session: {target}"}})
     return {"status": "Exfiltration initiated", "target": target}
+
 
 @app.get("/post_exploit/persistence")
 async def pe_persistence(os_type: str = "windows"):
     plugin = plugin_manager.get_plugin("Post-Exploit")
-    if not plugin: raise HTTPException(status_code=404, detail="Post-Exploit plugin not found")
+    if not plugin:
+        raise HTTPException(status_code=404, detail="Post-Exploit plugin not found")
     return await plugin.generate_persistence(os_type)
+
+
+# ─── FUZZER ──────────────────────────────────────────────────────
 
 class FuzzerTargetBody(BaseModel):
     ip: Optional[str] = None
 
+
 @app.post("/fuzzer/mdns")
 async def fuzz_mdns(body: FuzzerTargetBody = None):
     plugin = plugin_manager.get_plugin("Fuzzer")
-    if not plugin: raise HTTPException(status_code=404)
+    if not plugin:
+        raise HTTPException(status_code=404)
     target_ip = (body.ip if body else None) or target_store.last_target
     if not target_ip:
         raise HTTPException(status_code=400, detail="No target specified. Provide {ip} or run /scan first.")
     return await plugin.fuzz_mdns(target_ip)
 
+
 @app.post("/fuzzer/snmp")
 async def fuzz_snmp(body: FuzzerTargetBody = None):
     plugin = plugin_manager.get_plugin("Fuzzer")
-    if not plugin: raise HTTPException(status_code=404)
+    if not plugin:
+        raise HTTPException(status_code=404)
     target_ip = (body.ip if body else None) or target_store.last_target
     if not target_ip:
         raise HTTPException(status_code=400, detail="No target specified. Provide {ip} or run /scan first.")
     return await plugin.fuzz_snmp(target_ip)
 
+
 @app.post("/fuzzer/upnp")
 async def fuzz_upnp(body: FuzzerTargetBody = None):
     plugin = plugin_manager.get_plugin("Fuzzer")
-    if not plugin: raise HTTPException(status_code=404)
+    if not plugin:
+        raise HTTPException(status_code=404)
     target_ip = (body.ip if body else None) or target_store.last_target
     if not target_ip:
         raise HTTPException(status_code=400, detail="No target specified. Provide {ip} or run /scan first.")
     return await plugin.fuzz_upnp(target_ip)
 
+
 @app.get("/fuzzer/stats")
 async def fuzzer_stats():
     plugin = plugin_manager.get_plugin("Fuzzer")
-    if not plugin: raise HTTPException(status_code=404)
+    if not plugin:
+        raise HTTPException(status_code=404)
     return plugin.get_stats()
 
-# WIFI HANDSHAKES
-@app.get("/wifi/handshakes")
-async def wifi_handshakes():
-    plugin = plugin_manager.get_plugin("WiFi-Strike")
-    if not plugin: raise HTTPException(status_code=404)
-    return {"handshakes": plugin.get_handshakes()}
 
-@app.post("/wifi/pmkid")
-async def wifi_pmkid(body: WifiBSSIDBody):
-    plugin = plugin_manager.get_plugin("WiFi-Strike")
-    if not plugin: raise HTTPException(status_code=404)
-    return await plugin.pmkid_capture(body.bssid)
+# ─── SNIFFER ─────────────────────────────────────────────────────
 
-# DNS LOG FROM SNIFFER
 @app.get("/sniffer/dns")
 async def sniffer_dns_log():
     plugin = plugin_manager.get_plugin("Sniffer")
-    if not plugin: raise HTTPException(status_code=404)
+    if not plugin:
+        raise HTTPException(status_code=404)
     return {"dns_log": plugin.get_dns_log()}
 
-# HID-BLE ELITE ENDPOINTS
-@app.get("/hid_ble/scan")
-async def hid_ble_scan():
-    plugin = plugin_manager.get_plugin("HID-BLE-Strike")
-    if not plugin: raise HTTPException(status_code=404, detail="HID-BLE plugin not found")
-    return await plugin.scan_ble()
 
-class HIDInjectBody(BaseModel):
-    target_mac: str
-
-@app.post("/hid_ble/inject")
-async def hid_ble_inject(body: HIDInjectBody):
-    plugin = plugin_manager.get_plugin("HID-BLE-Strike")
-    if not plugin: raise HTTPException(status_code=404)
-    return await plugin.mousejack_inject(body.target_mac)
-
-# SNIFFER ELITE ENDPOINTS
 @app.get("/sniffer/credentials")
 async def get_captured_credentials():
     plugin = plugin_manager.get_plugin("Sniffer")
-    if not plugin: raise HTTPException(status_code=404, detail="Sniffer plugin not found")
+    if not plugin:
+        raise HTTPException(status_code=404, detail="Sniffer plugin not found")
     return {"credentials": plugin.credentials}
+
 
 @app.post("/sniffer/start")
 async def sniffer_start():
     return cap_engine.run_command("net.sniff on")
 
+
 @app.post("/sniffer/stop")
 async def sniffer_stop():
     return cap_engine.run_command("net.sniff off")
 
+
+# ─── HID-BLE ─────────────────────────────────────────────────────
+
+@app.get("/hid_ble/scan")
+async def hid_ble_scan():
+    plugin = plugin_manager.get_plugin("HID-BLE-Strike")
+    if not plugin:
+        raise HTTPException(status_code=404, detail="HID-BLE plugin not found")
+    return await plugin.scan_ble()
+
+
+class HIDInjectBody(BaseModel):
+    target_mac: str
+
+
+@app.post("/hid_ble/inject")
+async def hid_ble_inject(body: HIDInjectBody):
+    plugin = plugin_manager.get_plugin("HID-BLE-Strike")
+    if not plugin:
+        raise HTTPException(status_code=404)
+    return await plugin.mousejack_inject(body.target_mac)
+
+
+# ─── PROXY ───────────────────────────────────────────────────────
+
 class ProxyStartBody(BaseModel):
     port: Optional[int] = 8080
 
-# PROXY ELITE ENDPOINTS
+
 @app.post("/proxy/start")
 async def proxy_start(body: ProxyStartBody = None):
     port = body.port if body else 8080
@@ -482,15 +690,17 @@ async def proxy_start(body: ProxyStartBody = None):
         await plugin.start(port=port)
     return cap_engine.run_command("http.proxy on")
 
+
 @app.post("/proxy/stop")
 async def proxy_stop():
     return cap_engine.run_command("http.proxy off")
 
-# (removed legacy GET /cyber_strike/start — POST /cyber_strike/start is the canonical route)
 
-# SPOOFER ELITE ENDPOINTS
+# ─── SPOOFER ─────────────────────────────────────────────────────
+
 class SpooferStartBody(BaseModel):
     targets: Optional[list[str]] = None
+
 
 @app.post("/spoofer/start")
 async def spoofer_start(body: SpooferStartBody = None):
@@ -502,22 +712,20 @@ async def spoofer_start(body: SpooferStartBody = None):
         cap_engine.run_command(f"set arp.spoof.targets {','.join(targets)}")
     return cap_engine.run_command("arp.spoof on")
 
+
 @app.post("/spoofer/stop")
 async def spoofer_stop():
     return cap_engine.run_command("arp.spoof off")
 
-# WIFI ELITE ENDPOINTS
-class WifiCaptureBody(BaseModel):
-    bssid: str
 
-@app.post("/wifi/capture")
-async def wifi_capture(body: WifiCaptureBody):
-    p = plugin_manager.get_plugin("WiFi-Strike")
-    if not p: raise HTTPException(status_code=404)
-    return await p.capture_handshake(body.bssid)
+# ─── WEBSOCKETS (auth via query token) ──────────────────────────
 
 @app.websocket("/ws/recon")
 async def recon_websocket(websocket: WebSocket):
+    token = websocket.query_params.get("token")
+    if token and not decode_token(token):
+        await websocket.close(code=4001, reason="Invalid token")
+        return
     await websocket.accept()
     recon_adapter.start()
 
@@ -539,10 +747,7 @@ async def recon_websocket(websocket: WebSocket):
     task1 = asyncio.create_task(recv_from_ws())
     task2 = asyncio.create_task(send_to_ws())
     try:
-        done, pending = await asyncio.wait(
-            [task1, task2],
-            return_when=asyncio.FIRST_COMPLETED
-        )
+        done, pending = await asyncio.wait([task1, task2], return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
     finally:
@@ -553,8 +758,13 @@ async def recon_websocket(websocket: WebSocket):
             pass
         print("[Recon WS] Client disconnected, recon-ng process cleaned up")
 
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    token = websocket.query_params.get("token")
+    if token and not decode_token(token):
+        await websocket.close(code=4001, reason="Invalid token")
+        return
     await websocket.accept()
     connected_clients.add(websocket)
     try:
@@ -562,7 +772,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         connected_clients.discard(websocket)
-        print("Client disconnected")
+
 
 if __name__ == "__main__":
     import uvicorn
