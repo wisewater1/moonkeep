@@ -152,7 +152,7 @@ const Dashboard = () => {
             setActiveTarget(d.devices[0]);
           }
         });
-      } catch (err) {
+      } catch {
         setStrikeLog(prev => [...prev.slice(-40), "[!] BACKEND OFFLINE ON PORT 8001"]);
       }
     };
@@ -221,7 +221,7 @@ const Dashboard = () => {
     if (!cmd.trim()) return;
     const newHistory = [cmd, ...bcapHistory.filter(h => h !== cmd)].slice(0, 100);
     setBcapHistory(newHistory);
-    try { localStorage.setItem('moonkeep_cli_history', JSON.stringify(newHistory)); } catch { }
+    try { localStorage.setItem('moonkeep_cli_history', JSON.stringify(newHistory)); } catch { /* ignore */ }
     setHistoryIndex(-1);
     setBcapCmd("");
     setSuggestion("");
@@ -243,7 +243,7 @@ const Dashboard = () => {
           color: l.includes('→') ? '#22d3ee' : l.includes('error') ? '#f43f5e' : l.includes('═') ? '#a78bfa' : '#94a3b8'
         }))]);
       }
-    } catch (err) {
+    } catch {
       setCliOutput(prev => [...prev, { text: '[!] Engine connection failed', color: '#f43f5e' }]);
       setStrikeLog(prev => [...prev.slice(-40), `[!] CAP: Connection failed`]);
     }
@@ -273,7 +273,7 @@ const Dashboard = () => {
       const data = await res.json();
       setStrikeLog(prev => [...prev.slice(-40), `[<] SUCCESS: ${endpoint}`, `[#] DATA: ${JSON.stringify(data).slice(0, 100)}...`]);
       return data;
-    } catch (err) {
+    } catch {
       setStrikeLog(prev => [...prev.slice(-40), `[!] FAILED: ${endpoint}`]);
       return null;
     }
@@ -293,7 +293,7 @@ const Dashboard = () => {
         a.click();
         document.body.removeChild(a);
       }
-    } catch (err) { }
+    } catch { /* ignore */ }
   };
 
   const renderModuleUI = () => {
