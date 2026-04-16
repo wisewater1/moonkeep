@@ -216,7 +216,7 @@ const Dashboard = () => {
       fetch(`${API_BASE}/bettercap/status`).then(r => r.json()).then(setBcapStatus).catch(() => { });
     }, 5000);
     // Initial check
-    fetch('${API_BASE}/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
+    fetch(`${API_BASE}/bettercap/status`).then(r => r.json()).then(setBcapStatus).catch(() => { });
     return () => clearInterval(pollBcap);
   }, []);
 
