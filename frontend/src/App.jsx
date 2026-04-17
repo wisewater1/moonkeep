@@ -229,7 +229,7 @@ const Dashboard = () => {
     scanning, setScanning, capturedCreds,
     activeTarget, setActiveTarget, setTargetDrawerOpen,
     secretFindings, setSecretFindings,
-    vulnCards, setStrikeLog,
+    vulnCards, setVulnCards, setStrikeLog,
     cyberStrikeRole, setCyberStrikeRole,
     cyberStrikeLog, setCyberStrikeLog,
     aiCmd, setAiCmd, aiPlan, setAiPlan,

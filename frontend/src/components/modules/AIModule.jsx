@@ -7,7 +7,7 @@ const AIModule = ({ aiCmd, setAiCmd, aiPlan, setAiPlan, aiInsights, setAiInsight
         <h3>AI Copilot War Room</h3>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <span className="status-badge active">BRAIN ONLINE</span>
-          <button className="btn-primary flex items-center gap-2" onClick={async () => {
+          <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={async () => {
             const data = await apiCall('/ai/analyze', 'POST');
             if (data?.insights) setAiInsights(data.insights);
           }}>

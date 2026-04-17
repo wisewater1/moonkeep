@@ -118,3 +118,95 @@ def test_audit_log_records_actions(client, auth_headers):
     assert isinstance(entries, list)
     actions = [e["action"] for e in entries]
     assert "LOGIN_SUCCESS" in actions
+
+
+# ── Auth status & me ────────────────────────────────────────────
+
+def test_auth_status(client):
+    resp = client.get("/auth/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["auth_enabled"] is True
+    assert "version" in data
+
+
+def test_auth_me(client, auth_headers):
+    resp = client.get("/auth/me", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["username"] == "admin"
+    assert data["role"] == "admin"
+
+
+# ── Admin endpoints ─────────────────────────────────────────────
+
+def test_admin_list_users(client, auth_headers):
+    resp = client.get("/admin/users", headers=auth_headers)
+    assert resp.status_code == 200
+    users = resp.json()
+    assert isinstance(users, list)
+    usernames = [u["username"] for u in users]
+    assert "admin" in usernames
+
+
+def test_admin_delete_user(client, auth_headers):
+    client.post(
+        "/auth/register",
+        json={"username": "to_delete", "password": "pass123", "role": "operator"},
+        headers=auth_headers,
+    )
+    resp = client.delete("/admin/users/to_delete", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "deleted"
+    login = client.post("/auth/login", json={"username": "to_delete", "password": "pass123"})
+    assert login.status_code == 401
+
+
+def test_admin_cannot_delete_self(client, auth_headers):
+    resp = client.delete("/admin/users/admin", headers=auth_headers)
+    assert resp.status_code == 400
+    assert "Cannot delete yourself" in resp.json()["detail"]
+
+
+# ── Edge cases ──────────────────────────────────────────────────
+
+def test_login_empty_body(client):
+    resp = client.post("/auth/login", content=b"", headers={"Content-Type": "application/json"})
+    assert resp.status_code == 422
+
+
+def test_login_missing_fields(client):
+    resp = client.post("/auth/login", json={"username": "admin"})
+    assert resp.status_code == 422
+
+
+def test_login_sql_injection_username(client):
+    resp = client.post("/auth/login", json={"username": "'; DROP TABLE users; --", "password": "test"})
+    assert resp.status_code == 401
+    users_resp = client.post("/auth/login", json={"username": "admin", "password": "admin"})
+    assert users_resp.status_code == 200
+
+
+def test_tampered_token_signature(client):
+    from core.auth import create_token
+    token = create_token("admin", "admin")
+    tampered = token[:-4] + "XXXX"
+    resp = client.get("/plugins", headers={"Authorization": f"Bearer {tampered}"})
+    assert resp.status_code == 401
+
+
+def test_register_operator_cannot_register(client, auth_headers):
+    client.post(
+        "/auth/register",
+        json={"username": "op_user", "password": "pass", "role": "operator"},
+        headers=auth_headers,
+    )
+    login = client.post("/auth/login", json={"username": "op_user", "password": "pass"})
+    if login.status_code == 200:
+        op_headers = {"Authorization": f"Bearer {login.json()['token']}"}
+        resp = client.post(
+            "/auth/register",
+            json={"username": "sneaky", "password": "hack", "role": "operator"},
+            headers=op_headers,
+        )
+        assert resp.status_code == 403
