@@ -1,5 +1,4 @@
 from core.plugin_manager import BasePlugin
-import socket
 import asyncio
 import re
 import ssl
@@ -74,6 +73,14 @@ class VulnScannerPlugin(BasePlugin):
     @property
     def description(self) -> str:
         return "Deep Vulnerability & CVE Assessment"
+
+    @property
+    def version(self) -> str:
+        return "2.0.0"
+
+    @property
+    def category(self) -> str:
+        return "recon"
 
     async def start(self):
         self.results = []

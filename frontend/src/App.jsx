@@ -9,6 +9,7 @@ import LoginScreen from './components/LoginScreen.jsx';
 import ModulePanel from './components/ModulePanel.jsx';
 import CapTerminal from './components/CapTerminal.jsx';
 import TacticalFeed from './components/TacticalFeed.jsx';
+import MetricsDashboard from './components/MetricsDashboard.jsx';
 
 const ReconTerminal = () => {
   const terminalRef = useRef(null);
@@ -325,6 +326,15 @@ const Dashboard = () => {
             <p style={{ fontSize: '0.6rem', marginTop: '0.3rem', color: 'var(--neo-cyan)' }}>{user?.username?.toUpperCase()}</p>
           </div>
         </header>
+
+        <MetricsDashboard
+          devices={devices}
+          networks={networks}
+          capturedCreds={capturedCreds}
+          vulnCards={vulnCards}
+          secretFindings={secretFindings}
+          strikeLog={strikeLog}
+        />
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 450px', gap: '1rem', flex: 1, overflow: 'hidden' }}>
           <ModulePanel

@@ -22,6 +22,14 @@ class WardriverPlugin(BasePlugin):
     def description(self) -> str:
         return "Wi-Fi Wardriving & WiGLE Logging"
 
+    @property
+    def version(self) -> str:
+        return "2.0.0"
+
+    @property
+    def category(self) -> str:
+        return "wireless"
+
     def _init_log(self):
         with open(self.current_log, 'w', newline='') as f:
             writer = csv.writer(f)

@@ -61,6 +61,14 @@ class SnifferPlugin(BasePlugin):
     def description(self) -> str:
         return "Professional DPI & Credential Harvester"
 
+    @property
+    def version(self) -> str:
+        return "2.0.0"
+
+    @property
+    def category(self) -> str:
+        return "mitm"
+
     async def start(self):
         self.sniffer = AsyncSniffer(prn=self._process_packet, store=False)
         self.sniffer.start()

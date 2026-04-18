@@ -1,4 +1,5 @@
 from core.plugin_manager import BasePlugin
+import asyncio
 import os
 import re
 import math
@@ -63,6 +64,14 @@ class SecretHunterPlugin(BasePlugin):
     def description(self) -> str:
         return "Zero-Mock Repository Secret Discovery"
 
+    @property
+    def version(self) -> str:
+        return "1.5.0"
+
+    @property
+    def category(self) -> str:
+        return "recon"
+
     async def start(self):
         self.emit("INFO", {"msg": "Secret Hunter initialized with 30+ detection patterns"})
 
@@ -75,6 +84,11 @@ class SecretHunterPlugin(BasePlugin):
             return 0
         prob = [float(s.count(c)) / len(s) for c in set(s)]
         return -sum(p * math.log2(p) for p in prob)
+
+    def _read_file(self, path):
+        """Synchronous file read helper — called via asyncio.to_thread()."""
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            return f.read()
 
     async def hunt(self, target_path=".."):
         """Deep filesystem scan for exposed secrets, API keys, tokens, and credentials."""
@@ -100,40 +114,39 @@ class SecretHunterPlugin(BasePlugin):
                     continue
 
                 try:
-                    with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read()
-                        files_scanned += 1
+                    content = await asyncio.to_thread(self._read_file, path)
+                    files_scanned += 1
 
-                        for name, pattern in self.patterns.items():
-                            for match in re.finditer(pattern, content):
-                                matched_text = match.group(0)
-                                # Filter low-entropy matches (reduces false positives)
-                                if len(matched_text) > 12 and self._entropy(matched_text) < 2.5:
-                                    continue
+                    for name, pattern in self.patterns.items():
+                        for match in re.finditer(pattern, content):
+                            matched_text = match.group(0)
+                            # Filter low-entropy matches (reduces false positives)
+                            if len(matched_text) > 12 and self._entropy(matched_text) < 2.5:
+                                continue
 
-                                # Get line number
-                                line_num = content[:match.start()].count('\n') + 1
-                                rel_path = os.path.relpath(path, abs_target)
+                            # Get line number
+                            line_num = content[:match.start()].count('\n') + 1
+                            rel_path = os.path.relpath(path, abs_target)
 
-                                # Mask the middle of the secret for safety
-                                preview_raw = content[max(0, match.start()-10):min(len(content), match.end()+10)]
-                                if len(matched_text) > 8:
-                                    masked = matched_text[:4] + "*" * min(len(matched_text) - 8, 20) + matched_text[-4:]
-                                else:
-                                    masked = matched_text
+                            # Mask the middle of the secret for safety
+                            preview_raw = content[max(0, match.start()-10):min(len(content), match.end()+10)]
+                            if len(matched_text) > 8:
+                                masked = matched_text[:4] + "*" * min(len(matched_text) - 8, 20) + matched_text[-4:]
+                            else:
+                                masked = matched_text
 
-                                finding = {
-                                    "file": rel_path,
-                                    "line": line_num,
-                                    "type": name,
-                                    "preview": f"...{masked}...",
-                                    "entropy": round(self._entropy(matched_text), 2),
-                                    "severity": "CRITICAL" if name in ("Private Key", "SSH Private Key", "AWS Secret Key", "Database URL") else "HIGH",
-                                }
-                                findings.append(finding)
+                            finding = {
+                                "file": rel_path,
+                                "line": line_num,
+                                "type": name,
+                                "preview": f"...{masked}...",
+                                "entropy": round(self._entropy(matched_text), 2),
+                                "severity": "CRITICAL" if name in ("Private Key", "SSH Private Key", "AWS Secret Key", "Database URL") else "HIGH",
+                            }
+                            findings.append(finding)
 
-                                # Emit each finding as a WebSocket event
-                                self.emit("SECRET_FOUND", finding)
+                            # Emit each finding as a WebSocket event
+                            self.emit("SECRET_FOUND", finding)
 
                 except Exception:
                     pass

@@ -28,6 +28,14 @@ class WiFiAttackPlugin(BasePlugin):
     def description(self) -> str:
         return "Tactical Deauth & Handshake Capture"
 
+    @property
+    def version(self) -> str:
+        return "2.0.0"
+
+    @property
+    def category(self) -> str:
+        return "wireless"
+
     async def start(self, interface=None):
         from scapy.all import get_working_if
         self.interface = interface or get_working_if()

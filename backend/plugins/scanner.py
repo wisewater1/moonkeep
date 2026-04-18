@@ -45,6 +45,14 @@ class ScannerPlugin(BasePlugin):
     def description(self) -> str:
         return "Network Discovery via ARP Requests"
 
+    @property
+    def version(self) -> str:
+        return "2.1.0"
+
+    @property
+    def category(self) -> str:
+        return "recon"
+
     async def start(self) -> None:
         self.emit("INFO", {"msg": "Scanner initialized with OUI database"})
 

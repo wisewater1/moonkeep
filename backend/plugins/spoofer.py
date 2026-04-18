@@ -21,6 +21,14 @@ class SpooferPlugin(BasePlugin):
     def description(self) -> str:
         return "Advanced Multi-Protocol MITM (ARP/IPv6/DNS)"
 
+    @property
+    def version(self) -> str:
+        return "2.0.0"
+
+    @property
+    def category(self) -> str:
+        return "mitm"
+
     async def start(self, targets=None, gateway=None, dns_table=None, ipv6=True):
         if self.running:
             return

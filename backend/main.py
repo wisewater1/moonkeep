@@ -75,6 +75,18 @@ def _emit(event):
         event_queue.put_nowait(event)
     except asyncio.QueueFull:
         pass
+    if isinstance(event, dict) and event.get("plugin"):
+        try:
+            campaign_manager.record_timeline(
+                target_store.active_campaign,
+                event.get("plugin", "system"),
+                event.get("type", "INFO"),
+                event.get("data", {}).get("target", ""),
+                str(event.get("data", {}).get("msg", ""))[:200],
+                event.get("type", "INFO"),
+            )
+        except Exception:
+            pass
 
 
 cap_engine = NativeCapEngine()
@@ -133,7 +145,11 @@ async def lifespan(app: FastAPI):
     print("[SYSTEM] Moonkeep shutdown complete")
 
 
-limiter = Limiter(key_func=get_remote_address)
+_redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+try:
+    limiter = Limiter(key_func=get_remote_address, storage_uri=_redis_url)
+except Exception:
+    limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Moonkeep Elite API", version="2.0.0", lifespan=lifespan)
 app.state.limiter = limiter
 
@@ -295,6 +311,82 @@ async def export_report(campaign_id: str, fmt: str = "markdown"):
         raise HTTPException(status_code=404, detail="Campaign not found")
     report = campaign_manager.export_report(campaign_id, fmt=fmt)
     return {"report": report, "format": fmt}
+
+
+@app.get("/campaigns/{campaign_id}/metrics")
+async def campaign_metrics(campaign_id: str):
+    campaign = campaign_manager.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign_manager.get_metrics(campaign_id)
+
+
+@app.get("/campaigns/{campaign_id}/executive_summary")
+async def campaign_executive_summary(campaign_id: str):
+    campaign = campaign_manager.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return {"summary": campaign_manager.generate_executive_summary(campaign_id), "format": "markdown"}
+
+
+@app.get("/campaigns/{campaign_id}/timeline")
+async def campaign_timeline(campaign_id: str, limit: int = 200):
+    campaign = campaign_manager.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return {"events": campaign_manager.load_timeline(campaign_id, limit)}
+
+
+@app.post("/campaigns/{campaign_id}/timeline")
+async def record_timeline_event(campaign_id: str, event: dict):
+    campaign_manager.record_timeline(
+        campaign_id,
+        event.get("plugin", "manual"),
+        event.get("action", ""),
+        event.get("target", ""),
+        event.get("result", ""),
+        event.get("severity", "INFO"),
+    )
+    return {"status": "recorded"}
+
+
+@app.get("/campaigns/{campaign_id}/heatmap")
+async def campaign_heatmap(campaign_id: str):
+    campaign = campaign_manager.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign_manager.get_threat_heatmap(campaign_id)
+
+
+@app.get("/health")
+async def health_check():
+    plugin_health = {}
+    for name, p in plugin_manager.plugins.items():
+        plugin_health[name] = {
+            "version": p.version,
+            "category": p.category,
+            "has_event_queue": p.event_queue is not None,
+            "has_target_store": p.target_store is not None,
+        }
+    return {
+        "status": "healthy",
+        "uptime_plugins": len(plugin_manager.plugins),
+        "active_campaign": target_store.active_campaign,
+        "cap_engine_running": cap_engine.is_running(),
+        "cap_active_modules": list(cap_engine.active_modules),
+        "connected_ws_clients": len(connected_clients),
+        "event_queue_size": event_queue.qsize(),
+        "plugins": plugin_health,
+    }
+
+
+@app.get("/metrics")
+async def global_metrics():
+    active = target_store.active_campaign
+    metrics = campaign_manager.get_metrics(active)
+    metrics["active_plugins"] = len(plugin_manager.plugins)
+    metrics["cap_modules"] = len(cap_engine.active_modules)
+    return metrics
 
 
 # ─── NATIVE CAP ENGINE CLI ──────────────────────────────────────

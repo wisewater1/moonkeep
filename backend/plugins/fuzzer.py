@@ -1,7 +1,6 @@
 from core.plugin_manager import BasePlugin
 from scapy.all import IP, UDP, SNMP, SNMPget, SNMPvarbind, ASN1_OID, send, Raw, DNS, DNSQR, RandShort
-import threading
-import time
+import asyncio
 import struct
 import os
 
@@ -19,6 +18,14 @@ class FuzzerPlugin(BasePlugin):
     def description(self) -> str:
         return "Multi-Protocol Service Fuzzer (SNMP/MDNS/UPnP)"
 
+    @property
+    def version(self) -> str:
+        return "1.5.0"
+
+    @property
+    def category(self) -> str:
+        return "offensive"
+
     async def start(self):
         self.running = True
         self.stats = {"snmp_sent": 0, "mdns_sent": 0, "upnp_sent": 0, "errors": 0}
@@ -35,7 +42,7 @@ class FuzzerPlugin(BasePlugin):
         self.running = True
         self.emit("INFO", {"msg": f"SNMP fuzzer targeting {target_ip} ({iterations} iterations)"})
 
-        def _run():
+        async def _fuzz_async():
             mutations = [
                 # Long OID traversal
                 lambda i: "1.3.6.1.2.1.1." + "1." * (i % 80),
@@ -62,16 +69,16 @@ class FuzzerPlugin(BasePlugin):
                         community=comm,
                         PDU=SNMPget(varbindlist=[SNMPvarbind(oid=ASN1_OID(oid))])
                     )
-                    send(pkt, verbose=False)
+                    await asyncio.to_thread(send, pkt, verbose=False)
                     self.stats["snmp_sent"] += 1
                     if i % 50 == 0:
                         self.emit("INFO", {"msg": f"SNMP fuzz progress: {i}/{iterations} packets"})
-                    time.sleep(0.03)
+                    await asyncio.sleep(0.03)
                 except Exception as e:
                     self.stats["errors"] += 1
             self.emit("SUCCESS", {"msg": f"SNMP fuzzing complete: {self.stats['snmp_sent']} sent, {self.stats['errors']} errors"})
 
-        threading.Thread(target=_run, daemon=True).start()
+        asyncio.create_task(_fuzz_async())
         return {"status": "SNMP Fuzzing Active", "target": target_ip, "iterations": iterations}
 
     async def fuzz_mdns(self, target_ip="224.0.0.251", iterations=150):
@@ -82,7 +89,7 @@ class FuzzerPlugin(BasePlugin):
         self.running = True
         self.emit("INFO", {"msg": f"MDNS fuzzer broadcasting to {target_ip} ({iterations} iterations)"})
 
-        def _run():
+        async def _fuzz_async():
             query_mutations = [
                 # Oversized service name
                 lambda i: f"{'A' * min(i + 10, 250)}._tcp.local.",
@@ -109,16 +116,16 @@ class FuzzerPlugin(BasePlugin):
                     pkt = IP(dst=target_ip, ttl=255) / UDP(sport=5353, dport=5353) / DNS(
                         rd=0, qd=DNSQR(qname=qname, qtype=qtype, qclass=0x8001)
                     )
-                    send(pkt, verbose=False)
+                    await asyncio.to_thread(send, pkt, verbose=False)
                     self.stats["mdns_sent"] += 1
                     if i % 30 == 0:
                         self.emit("INFO", {"msg": f"MDNS fuzz progress: {i}/{iterations} queries"})
-                    time.sleep(0.04)
+                    await asyncio.sleep(0.04)
                 except Exception as e:
                     self.stats["errors"] += 1
             self.emit("SUCCESS", {"msg": f"MDNS fuzzing complete: {self.stats['mdns_sent']} sent, {self.stats['errors']} errors"})
 
-        threading.Thread(target=_run, daemon=True).start()
+        asyncio.create_task(_fuzz_async())
         return {"status": "MDNS Fuzzing Active", "target": target_ip, "iterations": iterations}
 
     async def fuzz_upnp(self, target_ip="239.255.255.250", iterations=100):
@@ -128,7 +135,7 @@ class FuzzerPlugin(BasePlugin):
         self.running = True
         self.emit("INFO", {"msg": f"UPnP SSDP fuzzer targeting {target_ip}"})
 
-        def _run():
+        async def _fuzz_async():
             ssdp_mutations = [
                 # Standard discovery
                 "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 3\r\nST: ssdp:all\r\n\r\n",
@@ -151,16 +158,16 @@ class FuzzerPlugin(BasePlugin):
                 try:
                     payload = ssdp_mutations[i % len(ssdp_mutations)]
                     pkt = IP(dst=target_ip, ttl=4) / UDP(sport=RandShort(), dport=1900) / Raw(load=payload.encode())
-                    send(pkt, verbose=False)
+                    await asyncio.to_thread(send, pkt, verbose=False)
                     self.stats["upnp_sent"] += 1
                     if i % 25 == 0:
                         self.emit("INFO", {"msg": f"UPnP fuzz progress: {i}/{iterations}"})
-                    time.sleep(0.05)
+                    await asyncio.sleep(0.05)
                 except Exception as e:
                     self.stats["errors"] += 1
             self.emit("SUCCESS", {"msg": f"UPnP fuzzing complete: {self.stats['upnp_sent']} sent"})
 
-        threading.Thread(target=_run, daemon=True).start()
+        asyncio.create_task(_fuzz_async())
         return {"status": "UPnP SSDP Fuzzing Active", "target": target_ip}
 
     def get_stats(self):

@@ -56,6 +56,14 @@ class CyberStrikePlugin(BasePlugin):
     def description(self) -> str:
         return "Autonomous Role-Based Strike Engine"
 
+    @property
+    def version(self) -> str:
+        return "2.1.0"
+
+    @property
+    def category(self) -> str:
+        return "orchestration"
+
     async def start(self, role="Shadow", plugin_manager=None):
         self.active_role = role
         self._running = True

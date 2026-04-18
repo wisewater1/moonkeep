@@ -18,6 +18,14 @@ class ProxyPlugin(BasePlugin):
     def description(self) -> str:
         return "Scriptable HTTP/HTTPS Proxy"
 
+    @property
+    def version(self) -> str:
+        return "1.5.0"
+
+    @property
+    def category(self) -> str:
+        return "mitm"
+
     async def start(self, port=8080, script=None):
         if self.running:
             return
