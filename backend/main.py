@@ -279,16 +279,17 @@ async def secret_hunter_start():
 async def vulnerability_scan(target: str = None):
     if not target: target = target_store.last_target
     if not target: raise HTTPException(status_code=400, detail="No target specified")
+    plugin = plugin_manager.get_plugin("Vuln-Scanner")
+    if not plugin: raise HTTPException(status_code=404, detail="Vuln-Scanner not available")
     orchestrator = plugin_manager.get_plugin("AI-Orchestrator")
-    if orchestrator:
-        event_queue.put_nowait({"ts": time.time(), "plugin": "Vuln-Scanner", "type": "INFO", "data": {"msg": f"Initiating deep audit on {target}"}})
-        event_queue.put_nowait({
-            "ts": time.time(),
-            "type": "VULN_RESULT",
-            "plugin": "Vuln-Scanner", 
-            "data": {"cve": "CVE-2021-44228", "severity": "CRITICAL", "desc": "Log4j Remote Code Execution"}
-        })
-    return {"status": "Analysis in progress", "target": target}
+
+    async def _scan_and_ingest():
+        results = await plugin.scan_target(target)
+        if orchestrator and results:
+            orchestrator.ingest_vuln_results(target, results)
+
+    asyncio.create_task(_scan_and_ingest())
+    return {"status": "Vulnerability scan launched", "target": target}
 
 # CYBER STRIKE ENDPOINTS
 class CyberStrikeBody(BaseModel):
