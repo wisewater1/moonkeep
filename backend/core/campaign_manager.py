@@ -2,6 +2,7 @@ import sqlite3
 import os
 import time
 import json
+from collections import Counter
 from typing import List, Dict, Any, Optional
 
 class CampaignManager:
@@ -139,18 +140,37 @@ class CampaignManager:
         md += f"**Scope:** {campaign['scope']}\n**Description:** {campaign['description']}\n\n"
         
         devices = self.load_devices(campaign_id)
-        md += f"### Discovered Devices ({len(devices)})\n"
-        for d in devices:
-            md += f"- `{d['ip']}` | {d['mac']} | {d['vendor']}\n"
-            
+        md += f"### Discovered Devices ({len(devices)})\n\n"
+        if devices:
+            md += "| IP Address | MAC Address | Vendor | Hostname |\n"
+            md += "|------------|-------------|--------|----------|\n"
+            for d in devices:
+                ip       = d.get('ip')       or ''
+                mac      = d.get('mac')      or ''
+                vendor   = d.get('vendor')   or ''
+                hostname = d.get('hostname') or ''
+                md += f"| `{ip}` | {mac} | {vendor} | {hostname} |\n"
+            md += "\n"
+        else:
+            md += "_No devices discovered._\n\n"
+
         networks = self.load_networks(campaign_id)
-        md += f"\n### Discovered Wireless Networks ({len(networks)})\n"
+        md += f"### Discovered Wireless Networks ({len(networks)})\n"
         for n in networks:
             md += f"- `{n['ssid']}` ({n['bssid']}) - Ch {n['channel']} [{n['encryption']}]\n"
-            
+
         creds = self.load_credentials(campaign_id)
-        md += f"\n### Captured Loot ({len(creds)})\n"
-        for c in creds:
-            md += f"- **{c['plugin']}**: `{c['content']}`\n"
+        md += f"\n### Captured Credentials ({len(creds)} total)\n\n"
+        if creds:
+            freq = Counter((c['plugin'], c['content']) for c in creds)
+            top_creds = freq.most_common(10)
+            md += "| Plugin | Credential | Occurrences |\n"
+            md += "|--------|-----------|-------------|\n"
+            for (plugin, content), count in top_creds:
+                display = content if len(content) <= 60 else content[:57] + "..."
+                md += f"| {plugin} | `{display}` | {count} |\n"
+            md += "\n"
+        else:
+            md += "_No credentials captured._\n\n"
             
         return md
