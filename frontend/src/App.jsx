@@ -117,6 +117,20 @@ const Dashboard = () => {
   const [osintData, setOsintData] = useState(null);
   const [reportHTML, setReportHTML] = useState('');
 
+  // Novel Concept Plugin States
+  const [fpProfiles, setFpProfiles] = useState([]);
+  const [fpTargetBssid, setFpTargetBssid] = useState('');
+  const [identities, setIdentities] = useState([]);
+  const [genomePolicy, setGenomePolicy] = useState(null);
+  const [genomeCreds, setGenomeCreds] = useState([]);
+  const [baselineActive, setBaselineActive] = useState(false);
+  const [baselineData, setBaselineData] = useState(null);
+  const [baselineSecs, setBaselineSecs] = useState(60);
+  const [meshActive, setMeshActive] = useState(false);
+  const [meshId, setMeshId] = useState('');
+  const [meshDiscovered, setMeshDiscovered] = useState([]);
+  const [meshStatus, setMeshStatus] = useState(null);
+
   // Bettercap CLI State
   const [bcapStatus, setBcapStatus] = useState({ installed: false, running: false });
   const [bcapCmd, setBcapCmd] = useState("");
@@ -234,6 +248,15 @@ const Dashboard = () => {
       }
       if ((activePlugin === "WiFi-Strike" || activePlugin === "Wardriver") && rogueRADIUSActive) {
         fetch('http://localhost:8001/rogue_radius/hashes').then(r => r.json()).then(d => setRogueRADIUSHashes(d.hashes || [])).catch(() => { });
+      }
+      if (activePlugin === "WiFi-Fingerprinter") {
+        fetch('http://localhost:8001/wifi_fingerprint/profiles').then(r => r.json()).then(d => setFpProfiles(d.profiles || [])).catch(() => { });
+      }
+      if (activePlugin === "Baseline-Calibrator" && baselineActive) {
+        fetch('http://localhost:8001/baseline/status').then(r => r.json()).then(d => { if (d.baseline && d.baseline.arp_per_min !== undefined) setBaselineData(d.baseline); }).catch(() => { });
+      }
+      if (activePlugin === "Mesh-Injector" && meshActive) {
+        fetch('http://localhost:8001/mesh/status').then(r => r.json()).then(d => setMeshStatus(d)).catch(() => { });
       }
     }, 4000);
     return () => clearInterval(poll);
@@ -984,6 +1007,284 @@ const Dashboard = () => {
             {reportHTML && (
               <div style={{ width: '100%', flex: 1, borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--glass-border)' }}>
                 <iframe src={reportHTML} style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} title="Pentest Report" />
+              </div>
+            )}
+          </div>
+        );
+
+      case "WiFi-Fingerprinter":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>OS Behavioral Fingerprinter</h3>
+              <span className={`status-badge ${fpProfiles.length > 0 ? 'active' : ''}`}>{fpProfiles.length} PROFILES</span>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Deauths clients, measures reconnect latency, probe patterns, and EAPOL spacing to fingerprint device OS without sending identifying packets.
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input value={fpTargetBssid} onChange={e => setFpTargetBssid(e.target.value)} placeholder="AP BSSID (e.g. aa:bb:cc:dd:ee:ff)"
+                style={{ flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem', fontFamily: 'monospace' }} />
+              <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                await apiCall('/wifi_fingerprint/start', 'POST', {});
+                await apiCall('/wifi_fingerprint/fingerprint', 'POST', { bssid: fpTargetBssid || (networks[0]?.mac || 'ff:ff:ff:ff:ff:ff') });
+                setTimeout(async () => {
+                  const r = await apiCall('/wifi_fingerprint/profiles');
+                  if (r?.profiles) setFpProfiles(r.profiles);
+                }, 5000);
+              }}>FINGERPRINT AP</button>
+              <button className="btn-primary" style={{ fontSize: '0.7rem', opacity: 0.7 }} onClick={async () => {
+                const r = await apiCall('/wifi_fingerprint/profiles');
+                if (r?.profiles) setFpProfiles(r.profiles);
+              }}>REFRESH</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <table style={{ width: '100%', fontSize: '0.7rem', borderCollapse: 'collapse' }}>
+                <thead><tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--glass-border)' }}>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>MAC</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>OS GUESS</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>CONF</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>RECONNECT</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>PROBES</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>SSID HISTORY</th>
+                </tr></thead>
+                <tbody>
+                  {fpProfiles.map((p, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                      <td style={{ padding: '0.4rem', fontFamily: 'monospace', color: 'var(--neo-cyan)' }}>{p.mac}</td>
+                      <td style={{ padding: '0.4rem', color: '#f59e0b', fontWeight: 700 }}>{p.os_guess}</td>
+                      <td style={{ padding: '0.4rem', color: p.confidence >= 0.7 ? '#4ade80' : p.confidence >= 0.4 ? '#f59e0b' : '#6b7280' }}>{Math.round((p.confidence || 0) * 100)}%</td>
+                      <td style={{ padding: '0.4rem' }}>{p.reconnect_ms != null ? `${p.reconnect_ms}ms` : '—'}</td>
+                      <td style={{ padding: '0.4rem', color: 'var(--text-secondary)' }}>{p.probe_pattern}</td>
+                      <td style={{ padding: '0.4rem', fontSize: '0.65rem', color: 'var(--text-secondary)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {(p.ssid_history || []).join(', ') || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                  {fpProfiles.length === 0 && <tr><td colSpan="6" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No profiles yet. Enter a BSSID and fingerprint.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+
+      case "Identity-Correlator":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Cross-Protocol Identity Engine</h3>
+              <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                const r = await apiCall('/identity/correlate', 'POST');
+                if (r?.identities) setIdentities(r.identities);
+              }}>CORRELATE IDENTITIES</button>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Fuses RADIUS AD usernames, portal harvests, sniffer credentials, and device hostnames into ranked human profiles.
+            </p>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {identities.map((id, i) => (
+                <div key={i} className="glass-card" style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.02)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
+                      <span style={{ color: 'var(--neo-cyan)', fontWeight: 800, fontSize: '0.8rem' }}>{id.username}</span>
+                      {id.domain && <span style={{ fontSize: '0.6rem', color: '#a78bfa', background: 'rgba(168,85,247,0.1)', padding: '0.1rem 0.35rem', borderRadius: '3px' }}>{id.domain}</span>}
+                      {(id.sources || []).map(s => (
+                        <span key={s} style={{ fontSize: '0.55rem', color: '#22c55e', background: 'rgba(34,197,94,0.1)', padding: '0.1rem 0.35rem', borderRadius: '3px' }}>{s}</span>
+                      ))}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.15rem', fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                      {id.email && <span><span style={{ color: '#f59e0b' }}>EMAIL</span> {id.email}</span>}
+                      {id.device_ip && <span><span style={{ color: '#f59e0b' }}>IP</span> {id.device_ip}</span>}
+                      {id.hostname && <span><span style={{ color: '#f59e0b' }}>HOST</span> {id.hostname}</span>}
+                      {id.device_vendor && <span><span style={{ color: '#f59e0b' }}>VENDOR</span> {id.device_vendor}</span>}
+                    </div>
+                    {id.ntlm_hash && <p style={{ fontSize: '0.6rem', fontFamily: 'monospace', color: '#6b7280', marginTop: '0.3rem', wordBreak: 'break-all' }}>{id.ntlm_hash}</p>}
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 900, color: id.confidence >= 0.7 ? '#4ade80' : id.confidence >= 0.4 ? '#f59e0b' : '#6b7280' }}>
+                      {Math.round((id.confidence || 0) * 100)}%
+                    </div>
+                    <div style={{ fontSize: '0.55rem', color: 'var(--text-secondary)' }}>CONFIDENCE</div>
+                  </div>
+                </div>
+              ))}
+              {identities.length === 0 && <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Run Rogue-AP, Rogue-RADIUS, or Sniffer to collect data, then click CORRELATE IDENTITIES.</p>}
+            </div>
+          </div>
+        );
+
+      case "Cred-Genome":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Credential Genome</h3>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                  const r = await apiCall('/cred_genome/analyze', 'POST');
+                  if (r?.policy?.summary) setGenomePolicy(r.policy.summary);
+                }}>ANALYZE GRAMMAR</button>
+                <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                  const r = await apiCall('/cred_genome/generate', 'POST', { count: 100 });
+                  if (r?.credentials) setGenomeCreds(r.credentials);
+                }}>GENERATE CREDS</button>
+              </div>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Infers organisational password grammar from captured passwords and generates statistically targeted credential pairs.
+            </p>
+            {genomePolicy && (
+              <div className="glass-card" style={{ padding: '0.75rem', background: 'rgba(34,197,94,0.03)', border: '1px solid rgba(34,197,94,0.2)', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '0.35rem', fontSize: '0.68rem' }}>
+                <span><span style={{ color: '#22c55e' }}>LENGTH</span> {genomePolicy.min_length}–{genomePolicy.max_length} (avg {genomePolicy.avg_length})</span>
+                <span><span style={{ color: '#22c55e' }}>UPPER</span> {genomePolicy.req_upper ? 'REQUIRED' : 'optional'}</span>
+                <span><span style={{ color: '#22c55e' }}>DIGIT</span> {genomePolicy.req_digit ? 'REQUIRED' : 'optional'}</span>
+                <span><span style={{ color: '#22c55e' }}>SPECIAL</span> {genomePolicy.req_special ? 'REQUIRED' : 'optional'}</span>
+                <span style={{ gridColumn: 'span 2' }}><span style={{ color: '#22c55e' }}>PATTERNS</span> {(genomePolicy.top_patterns || []).join(' · ')}</span>
+                <span style={{ gridColumn: 'span 2' }}><span style={{ color: '#22c55e' }}>WORDS</span> {(genomePolicy.common_words || []).join(', ')}</span>
+              </div>
+            )}
+            {genomeCreds.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{genomeCreds.length} targeted pairs generated</span>
+                <button className="btn-primary" style={{ fontSize: '0.65rem' }} onClick={async () => {
+                  for (const c of genomeCreds.slice(0, 20)) {
+                    await apiCall('/cred_spray/run', 'POST', { credential: `${c.username}:${c.password}` });
+                  }
+                }}>PIPE TOP-20 → SPRAY</button>
+              </div>
+            )}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <table style={{ width: '100%', fontSize: '0.7rem', borderCollapse: 'collapse' }}>
+                <thead><tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--glass-border)' }}>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>USERNAME</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>PASSWORD</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>CONFIDENCE</th>
+                </tr></thead>
+                <tbody>
+                  {genomeCreds.map((c, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                      <td style={{ padding: '0.4rem', color: 'var(--neo-cyan)', fontFamily: 'monospace' }}>{c.username}</td>
+                      <td style={{ padding: '0.4rem', fontFamily: 'monospace', color: '#f87171' }}>{c.password}</td>
+                      <td style={{ padding: '0.4rem', color: c.confidence >= 0.6 ? '#4ade80' : '#f59e0b' }}>{Math.round(c.confidence * 100)}%</td>
+                    </tr>
+                  ))}
+                  {genomeCreds.length === 0 && <tr><td colSpan="3" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Analyze captured passwords first, then generate.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+
+      case "Baseline-Calibrator":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Noise-Floor Baseline</h3>
+              <span className={`status-badge ${baselineActive ? 'active' : ''}`}>{baselineActive ? 'OBSERVING' : baselineData ? 'READY' : 'IDLE'}</span>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Passively measures ARP, DNS, and TCP-SYN rates to compute safe injection delays that stay statistically indistinguishable from baseline traffic.
+            </p>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>OBSERVE FOR</span>
+              <input type="number" value={baselineSecs} onChange={e => setBaselineSecs(Number(e.target.value))} min={10} max={300}
+                style={{ width: '70px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'var(--neo-cyan)', padding: '0.3rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', textAlign: 'center' }} />
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>seconds</span>
+              <button className="btn-primary" style={{ fontSize: '0.7rem' }} disabled={baselineActive} onClick={async () => {
+                setBaselineActive(true);
+                setBaselineData(null);
+                await apiCall('/baseline/start', 'POST', { observe_secs: baselineSecs });
+                setTimeout(async () => {
+                  const r = await apiCall('/baseline/status');
+                  if (r?.baseline) setBaselineData(r.baseline);
+                  setBaselineActive(false);
+                }, (baselineSecs + 6) * 1000);
+              }}>START OBSERVATION</button>
+            </div>
+            {baselineData && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
+                {[
+                  { label: 'ARP', rate: baselineData.arp_per_min, delay: baselineData.safe_arp_delay_s, color: '#22c55e' },
+                  { label: 'DNS', rate: baselineData.dns_per_min, delay: baselineData.safe_dns_delay_s, color: '#22d3ee' },
+                  { label: 'SYN', rate: baselineData.syn_per_min, delay: baselineData.safe_syn_delay_s, color: '#a78bfa' },
+                ].map(m => (
+                  <div key={m.label} className="glass-card" style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.02)', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', letterSpacing: '1px' }}>{m.label} / MIN</div>
+                    <div style={{ fontSize: '1.6rem', fontWeight: 900, color: m.color, margin: '0.25rem 0' }}>{m.rate}</div>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>safe delay</div>
+                    <div style={{ fontSize: '0.85rem', color: m.color, fontWeight: 700 }}>{m.delay}s</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {baselineData && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.7rem' }}>
+                <div className="glass-card" style={{ padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.02)' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>AVG PACKET SIZE</span>
+                  <span style={{ float: 'right', color: 'var(--neo-cyan)', fontWeight: 700 }}>{baselineData.avg_packet_bytes} B</span>
+                </div>
+                <div className="glass-card" style={{ padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.02)' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>OBSERVED</span>
+                  <span style={{ float: 'right', color: 'var(--neo-cyan)', fontWeight: 700 }}>{baselineData.observed_seconds}s</span>
+                </div>
+              </div>
+            )}
+            {!baselineData && !baselineActive && <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Start observation to calibrate safe injection timing for ARP spoof, DNS hijack, and TCP spray attacks.</p>}
+          </div>
+        );
+
+      case "Mesh-Injector":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>802.11s Mesh Node Injector</h3>
+              <span className={`status-badge ${meshActive ? 'active' : ''}`} style={{ color: meshActive ? '#4ade80' : undefined }}>
+                {meshActive ? '● INJECTING' : '○ IDLE'}
+              </span>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Injects a rogue 802.11s mesh node advertising a superior Airtime Link Metric. Legitimate mesh nodes route traffic through the attacker transparently — no deauth, no captive portal.
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <input value={meshId} onChange={e => setMeshId(e.target.value)} placeholder="Mesh ID (auto-detect if blank)"
+                style={{ flex: 1, minWidth: '180px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <button className="btn-primary" style={{ fontSize: '0.7rem', opacity: 0.8 }} onClick={async () => {
+                const r = await apiCall('/mesh/scan', 'POST', {});
+                if (r?.meshes) setMeshDiscovered(r.meshes);
+              }}>PASSIVE SCAN</button>
+              <button className="btn-primary" style={{ fontSize: '0.7rem', background: meshActive ? 'rgba(239,68,68,0.15)' : undefined, borderColor: meshActive ? '#ef4444' : undefined }}
+                onClick={async () => {
+                  if (meshActive) {
+                    await apiCall('/mesh/stop', 'POST', {});
+                    setMeshActive(false);
+                  } else {
+                    await apiCall('/mesh/start', 'POST', { mesh_id: meshId, scan_first: !meshId });
+                    setMeshActive(true);
+                  }
+                }}>{meshActive ? 'STOP INJECTION' : 'INJECT NODE'}</button>
+            </div>
+            {meshDiscovered.length > 0 && (
+              <div>
+                <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>DISCOVERED MESHES</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  {meshDiscovered.map((m, i) => (
+                    <div key={i} className="glass-card" style={{ padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.02)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
+                      onClick={() => setMeshId(m.mesh_id)}>
+                      <div>
+                        <span style={{ color: 'var(--neo-cyan)', fontWeight: 700, fontSize: '0.75rem' }}>{m.mesh_id || '(unnamed)'}</span>
+                        <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>{m.bssid}</span>
+                      </div>
+                      <span style={{ fontSize: '0.65rem', color: '#f59e0b' }}>ch{m.channel}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {meshActive && meshStatus && (
+              <div className="glass-card" style={{ padding: '0.75rem', background: 'rgba(34,197,94,0.04)', border: '1px solid rgba(34,197,94,0.2)', fontSize: '0.72rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem' }}>
+                <span><span style={{ color: 'var(--text-secondary)' }}>MESH ID</span> <span style={{ color: '#4ade80', fontFamily: 'monospace' }}>{meshStatus.mesh_id}</span></span>
+                <span><span style={{ color: 'var(--text-secondary)' }}>CHANNEL</span> <span style={{ color: '#4ade80' }}>{meshStatus.channel}</span></span>
+                <span><span style={{ color: 'var(--text-secondary)' }}>IFACE</span> <span style={{ color: '#4ade80' }}>{meshStatus.iface}</span></span>
+                <span><span style={{ color: 'var(--text-secondary)' }}>BEACONS</span> <span style={{ color: '#4ade80' }}>~10/sec</span></span>
               </div>
             )}
           </div>

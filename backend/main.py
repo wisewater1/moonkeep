@@ -667,6 +667,113 @@ async def get_report_html(campaign_id: str):
         raise HTTPException(status_code=500, detail="Report generation failed")
     return FileResponse(html_path, media_type="text/html")
 
+# ─── WIFI FINGERPRINTER ──────────────────────────────────────────
+class FingerprintBody(BaseModel):
+    bssid: str
+    timeout: int = 35
+
+@app.post("/wifi_fingerprint/start")
+async def wifi_fp_start(iface: str = "wlan0"):
+    p = plugin_manager.get_plugin("WiFi-Fingerprinter")
+    if not p: raise HTTPException(status_code=404, detail="WiFi-Fingerprinter not found")
+    await p.start(interface=iface)
+    return {"status": "ready"}
+
+@app.post("/wifi_fingerprint/fingerprint")
+async def wifi_fp_run(body: FingerprintBody):
+    p = plugin_manager.get_plugin("WiFi-Fingerprinter")
+    if not p: raise HTTPException(status_code=404, detail="WiFi-Fingerprinter not found")
+    asyncio.create_task(p.fingerprint_ap(body.bssid, body.timeout))
+    return {"status": "fingerprinting", "bssid": body.bssid}
+
+@app.get("/wifi_fingerprint/profiles")
+async def wifi_fp_profiles():
+    p = plugin_manager.get_plugin("WiFi-Fingerprinter")
+    if not p: raise HTTPException(status_code=404)
+    return await p.get_profiles()
+
+# ─── IDENTITY CORRELATOR ─────────────────────────────────────────
+@app.post("/identity/correlate")
+async def identity_correlate():
+    p = plugin_manager.get_plugin("Identity-Correlator")
+    if not p: raise HTTPException(status_code=404, detail="Identity-Correlator not found")
+    return await p.correlate()
+
+@app.get("/identity/profiles")
+async def identity_profiles():
+    p = plugin_manager.get_plugin("Identity-Correlator")
+    if not p: raise HTTPException(status_code=404)
+    return await p.get_identities()
+
+# ─── CRED GENOME ─────────────────────────────────────────────────
+@app.post("/cred_genome/analyze")
+async def genome_analyze():
+    p = plugin_manager.get_plugin("Cred-Genome")
+    if not p: raise HTTPException(status_code=404, detail="Cred-Genome not found")
+    return await p.analyze()
+
+class GenomeGenerateBody(BaseModel):
+    count: int = 100
+
+@app.post("/cred_genome/generate")
+async def genome_generate(body: GenomeGenerateBody):
+    p = plugin_manager.get_plugin("Cred-Genome")
+    if not p: raise HTTPException(status_code=404, detail="Cred-Genome not found")
+    return await p.generate(body.count)
+
+# ─── BASELINE CALIBRATOR ─────────────────────────────────────────
+class BaselineBody(BaseModel):
+    interface: Optional[str] = None
+    observe_secs: int = 60
+
+@app.post("/baseline/start")
+async def baseline_start(body: BaselineBody):
+    p = plugin_manager.get_plugin("Baseline-Calibrator")
+    if not p: raise HTTPException(status_code=404, detail="Baseline-Calibrator not found")
+    await p.start(interface=body.interface, observe_secs=body.observe_secs)
+    return {"status": "observing", "observe_secs": body.observe_secs}
+
+@app.get("/baseline/status")
+async def baseline_status():
+    p = plugin_manager.get_plugin("Baseline-Calibrator")
+    if not p: raise HTTPException(status_code=404)
+    return await p.get_status()
+
+# ─── MESH INJECTOR ───────────────────────────────────────────────
+class MeshStartBody(BaseModel):
+    mesh_id: str = ""
+    channel: int = 6
+    iface: str = "wlan0"
+    iface_wan: str = "eth0"
+    scan_first: bool = True
+
+@app.post("/mesh/start")
+async def mesh_start(body: MeshStartBody):
+    p = plugin_manager.get_plugin("Mesh-Injector")
+    if not p: raise HTTPException(status_code=404, detail="Mesh-Injector not found")
+    asyncio.create_task(p.start(**body.model_dump()))
+    return {"status": "mesh_injection_starting", "mesh_id": body.mesh_id}
+
+@app.post("/mesh/stop")
+async def mesh_stop():
+    p = plugin_manager.get_plugin("Mesh-Injector")
+    if not p: raise HTTPException(status_code=404)
+    await p.stop()
+    return {"status": "mesh_stopped"}
+
+@app.post("/mesh/scan")
+async def mesh_scan(iface: str = "wlan0", timeout: int = 12):
+    p = plugin_manager.get_plugin("Mesh-Injector")
+    if not p: raise HTTPException(status_code=404)
+    meshes = await asyncio.to_thread(p._passive_scan, timeout)
+    return {"meshes": meshes}
+
+@app.get("/mesh/status")
+async def mesh_status():
+    p = plugin_manager.get_plugin("Mesh-Injector")
+    if not p: raise HTTPException(status_code=404)
+    return await p.get_status()
+
 # ─── PIPELINE ENGINE ─────────────────────────────────────────────────
 class PipelineRuleBody(BaseModel):
     rule: str
