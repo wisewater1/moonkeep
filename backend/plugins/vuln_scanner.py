@@ -60,6 +60,17 @@ class VulnScannerPlugin(BasePlugin):
                     "cvss":     cvss,
                     "severity": self._cvss_to_severity(cvss),
                 })
+        if results:
+            self.emit("VULN_RESULT", {"ip": ip, "count": len(results), "findings": results})
+            # Persist HIGH/CRITICAL findings directly to the active campaign
+            if self.target_store and self.target_store.active_campaign:
+                for v in results:
+                    if v['cvss'] >= 7.0:
+                        self.target_store.cm.save_finding(
+                            self.target_store.active_campaign,
+                            "VULNERABILITY", ip,
+                            f"{v['cve']} — {v['name']} (CVSS {v['cvss']}, {v['severity']})"
+                        )
         return results
 
     async def _check_port(self, ip, port):

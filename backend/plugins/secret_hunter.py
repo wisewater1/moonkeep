@@ -100,6 +100,12 @@ class SecretHunterPlugin(BasePlugin):
                                 }
                                 findings.append(finding)
                                 self.emit("SECRET_FINDING", finding)
+                                # Persist high-confidence secrets to the active campaign
+                                if confidence >= 0.7 and self.target_store:
+                                    self.target_store.save_credential(
+                                        f"Secret-Hunter:{name}",
+                                        secret_val[:200],
+                                    )
                     except Exception:
                         pass
 

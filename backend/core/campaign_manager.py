@@ -124,6 +124,22 @@ class CampaignManager:
         conn.commit()
         conn.close()
 
+    def save_finding(self, campaign_id: str, type: str, target: str, data: str):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("INSERT INTO findings (campaign_id, type, target, data, timestamp) VALUES (?, ?, ?, ?, ?)",
+                  (campaign_id, type, target, data, time.time()))
+        conn.commit()
+        conn.close()
+
+    def load_findings(self, campaign_id: str) -> List[Dict]:
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("SELECT type, target, data, timestamp FROM findings WHERE campaign_id=? ORDER BY timestamp DESC", (campaign_id,))
+        rows = c.fetchall()
+        conn.close()
+        return [{"type": r[0], "target": r[1], "data": r[2], "ts": r[3]} for r in rows]
+
     def load_credentials(self, campaign_id: str) -> List[Dict]:
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
@@ -172,5 +188,19 @@ class CampaignManager:
             md += "\n"
         else:
             md += "_No credentials captured._\n\n"
-            
+
+        findings = self.load_findings(campaign_id)
+        md += f"### Findings ({len(findings)} total)\n\n"
+        if findings:
+            md += "| Type | Target | Detail |\n"
+            md += "|------|--------|--------|\n"
+            for f in findings[:50]:
+                detail = f['data'] if len(f['data']) <= 80 else f['data'][:77] + "..."
+                md += f"| {f['type']} | `{f['target']}` | {detail} |\n"
+            if len(findings) > 50:
+                md += f"\n_...and {len(findings) - 50} more findings._\n"
+            md += "\n"
+        else:
+            md += "_No findings recorded._\n\n"
+
         return md
