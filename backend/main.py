@@ -217,7 +217,7 @@ async def perform_scan(target: str = ""):
 @app.get("/wifi_scan")
 async def perform_wifi_scan():
     # Automatically turn on wifi.recon 
-    engine2 = plugin_manager.get_plugin("NativeCapEngine") or NativeCapEngine()
+    engine2 = cap_engine
     engine2.run_command("wifi.recon on")
     await asyncio.sleep(2) # brief pause to let it scan
 
@@ -230,7 +230,7 @@ async def perform_wifi_scan():
 
 @app.post("/wifi/deauth")
 async def wifi_deauth(payload: dict):
-    engine2 = plugin_manager.get_plugin("NativeCapEngine") or NativeCapEngine()
+    engine2 = cap_engine
     # Expecting {"target": "...", "ap": "..."} in the JSON body
     ap = payload.get("ap")
     target = payload.get("target", "ff:ff:ff:ff:ff:ff")
@@ -240,19 +240,6 @@ async def wifi_deauth(payload: dict):
     # The actual bettercap usually targets a specific client MAC, but broadcast is fine.
     res = engine2.run_command(f"wifi.deauth {target}")
     return res
-
-@app.post("/wifi/capture")
-async def wifi_capture(payload: dict):
-    engine2 = plugin_manager.get_plugin("NativeCapEngine") or NativeCapEngine()
-    # Expecting {"bssid": "..."} in the JSON body
-    bssid = payload.get("bssid")
-    if not bssid:
-        raise HTTPException(status_code=400, detail="BSSID is required")
-    # For capture, we can just ensure recon is on for that specific channel.
-    # The native engine doesn't currently have a dedicated save command that mimics old wifi-strike exactly,
-    # but we will just return a success payload for UI parity for now.
-    engine2.run_command("wifi.recon on")
-    return {"status": "ok", "message": f"Listening for handshakes from {bssid} (check logs folder)"}
 
 @app.get("/ai/analyze")
 async def trigger_ai_analysis():
@@ -366,9 +353,12 @@ class ExfilBody(BaseModel):
 async def pe_exfiltrate(body: ExfilBody):
     plugin = plugin_manager.get_plugin("Post-Exploit")
     if not plugin: raise HTTPException(status_code=404, detail="Post-Exploit plugin not found")
-    target = body.target_session_id or (target_store.devices[0].get('ip') if target_store.devices else '192.168.1.1')
-    event_queue.put_nowait({"ts": time.time(), "plugin": "Post-Exploit", "type": "INFO", "data": {"msg": f"Harvesting data from session: {target}"}})
-    return {"status": "Exfiltration initiated", "target": target}
+    session_id = body.target_session_id or (
+        f"session_{target_store.devices[0].get('ip', '').replace('.', '_')}"
+        if target_store.devices else "local"
+    )
+    asyncio.create_task(plugin.exfiltrate_secrets(session_id))
+    return {"status": "exfiltration_launched", "session_id": session_id}
 
 @app.get("/post_exploit/persistence")
 async def pe_persistence(os: str = "windows"):
@@ -404,32 +394,73 @@ async def get_captured_credentials():
 
 @app.post("/sniffer/start")
 async def sniffer_start():
+    plugin = plugin_manager.get_plugin("Sniffer")
+    if plugin:
+        await plugin.start()
+        return {"status": "sniffer_active", "mode": "DPI"}
     return cap_engine.run_command("net.sniff on")
 
 @app.post("/sniffer/stop")
 async def sniffer_stop():
+    plugin = plugin_manager.get_plugin("Sniffer")
+    if plugin:
+        await plugin.stop()
+        return {"status": "sniffer_stopped"}
     return cap_engine.run_command("net.sniff off")
 
 # PROXY ELITE ENDPOINTS
+class ProxyStartBody(BaseModel):
+    port: int = 8080
+    script: Optional[str] = None
+
 @app.post("/proxy/start")
-async def proxy_start():
+async def proxy_start(body: ProxyStartBody = ProxyStartBody()):
+    plugin = plugin_manager.get_plugin("Proxy")
+    if plugin:
+        await plugin.start(port=body.port, script=body.script)
+        return {"status": "proxy_active", "port": body.port,
+                "ca_cert": getattr(plugin, "_ca_cert", None)}
     return cap_engine.run_command("http.proxy on")
 
 @app.post("/proxy/stop")
 async def proxy_stop():
+    plugin = plugin_manager.get_plugin("Proxy")
+    if plugin:
+        await plugin.stop()
+        return {"status": "proxy_stopped"}
     return cap_engine.run_command("http.proxy off")
 
 # (removed legacy GET /cyber_strike/start — POST /cyber_strike/start is the canonical route)
 
 # SPOOFER ELITE ENDPOINTS
+class SpooferStartBody(BaseModel):
+    targets: Optional[list[str]] = None
+    gateway: Optional[str] = None
+    dns_table: Optional[dict] = None
+
 @app.post("/spoofer/start")
-async def spoofer_start(targets: list[str] = None):
-    if targets is not None:
-        cap_engine.run_command(f"set arp.spoof.targets {','.join(targets)}")
+async def spoofer_start(body: SpooferStartBody = SpooferStartBody()):
+    plugin = plugin_manager.get_plugin("Spoofer")
+    if plugin:
+        await plugin.start(
+            targets=body.targets,
+            gateway=body.gateway,
+            dns_table=body.dns_table,
+        )
+        return {"status": "spoofer_active",
+                "targets": body.targets,
+                "gateway": body.gateway}
+    # cap_engine fallback
+    if body.targets:
+        cap_engine.run_command(f"set arp.spoof.targets {','.join(body.targets)}")
     return cap_engine.run_command("arp.spoof on")
 
 @app.post("/spoofer/stop")
 async def spoofer_stop():
+    plugin = plugin_manager.get_plugin("Spoofer")
+    if plugin:
+        await plugin.stop()
+        return {"status": "spoofer_stopped"}
     return cap_engine.run_command("arp.spoof off")
 
 # WIFI ELITE ENDPOINTS

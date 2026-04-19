@@ -2,6 +2,7 @@ from core.plugin_manager import BasePlugin
 from scapy.all import Dot11, Dot11Deauth, RadioTap, sendp, sniff, EAPOL, wrpcap
 import threading
 import subprocess
+import re
 import os
 import time
 
@@ -136,7 +137,7 @@ class WiFiAttackPlugin(BasePlugin):
                     ["aircrack-ng", "-b", bssid, "-w", wordlist, pcap_path],
                     capture_output=True, text=True, timeout=120,
                 )
-                m = __import__("re").search(r"KEY FOUND!\s*\[\s*(.+?)\s*\]", result.stdout)
+                m = re.search(r"KEY FOUND!\s*\[\s*(.+?)\s*\]", result.stdout)
                 if m:
                     return m.group(1)
             except (FileNotFoundError, subprocess.TimeoutExpired):

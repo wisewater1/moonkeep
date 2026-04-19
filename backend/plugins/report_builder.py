@@ -1,3 +1,4 @@
+from collections import Counter
 from core.plugin_manager import BasePlugin
 import asyncio
 import os
@@ -176,7 +177,6 @@ class ReportBuilderPlugin(BasePlugin):
 
         # Credentials
         if creds:
-            from collections import Counter
             freq = Counter((c["plugin"], c["content"]) for c in creds)
             top = freq.most_common(20)
             h += f"<h2>Captured Credentials ({len(creds)} total, top 20)</h2>"
