@@ -4,6 +4,7 @@ from core.plugin_manager import PluginManager
 from core.bettercap_adapter import NativeCapEngine
 from core.campaign_manager import CampaignManager
 from core.recon_adapter import recon_adapter
+from core.pipeline_engine import PipelineEngine
 import os
 import time
 import socket
@@ -55,6 +56,7 @@ target_store = TargetStore(campaign_manager)
 event_queue = asyncio.Queue()
 cap_engine = NativeCapEngine()
 connected_clients: set[WebSocket] = set()
+pipeline_engine = PipelineEngine()
 
 async def broadcast_events():
     while True:
@@ -67,6 +69,8 @@ async def broadcast_events():
                 dead_clients.add(client)
         for dead in dead_clients:
             connected_clients.discard(dead)
+        # Forward every event to the pipeline engine for automated chaining
+        asyncio.create_task(pipeline_engine.process_event(event))
 
 
 # Force discovery of all Elite modules
@@ -85,6 +89,7 @@ app = FastAPI(title="Moonkeep Elite API")
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(broadcast_events())
+    pipeline_engine.inject(plugin_manager, target_store, event_queue)
 
 app.add_middleware(
     CORSMiddleware,
@@ -433,6 +438,150 @@ async def wifi_capture(bssid: str):
     p = plugin_manager.get_plugin("WiFi-Strike")
     if not p: raise HTTPException(status_code=404)
     return await p.capture_handshake(bssid)
+
+# ─── CRED SPRAY ──────────────────────────────────────────────────────
+class SprayBody(BaseModel):
+    target_ip: Optional[str] = None
+    credential: Optional[str] = None
+
+@app.post("/cred_spray/run")
+async def cred_spray_run(body: SprayBody):
+    plugin = plugin_manager.get_plugin("Cred-Spray")
+    if not plugin: raise HTTPException(status_code=404, detail="Cred-Spray not found")
+    if body.credential:
+        plugin.add_credential(body.credential)
+    if body.target_ip:
+        plugin.add_target(body.target_ip, [22, 21, 80, 443, 8080, 3306, 5432, 6379])
+    asyncio.create_task(plugin.run_spray())
+    return {"status": "spray_launched",
+            "credentials": len(plugin._credential_pool),
+            "targets": len(plugin._targets)}
+
+@app.get("/cred_spray/results")
+async def cred_spray_results():
+    plugin = plugin_manager.get_plugin("Cred-Spray")
+    if not plugin: raise HTTPException(status_code=404)
+    return {"results": plugin.results,
+            "pool_size": len(plugin._credential_pool),
+            "target_count": len(plugin._targets)}
+
+# ─── EXPLOIT MAPPER ───────────────────────────────────────────────────
+@app.post("/exploit_mapper/map")
+async def exploit_map(target: str = None):
+    plugin = plugin_manager.get_plugin("Exploit-Mapper")
+    vs     = plugin_manager.get_plugin("Vuln-Scanner")
+    if not plugin: raise HTTPException(status_code=404, detail="Exploit-Mapper not found")
+    ip = target or target_store.last_target
+    if not ip: raise HTTPException(status_code=400, detail="No target")
+    vuln_results = []
+    if vs:
+        vuln_results = await vs.scan_target(ip)
+        for v in vuln_results:
+            v["ip"] = ip
+    suggestions = plugin.map_cves(vuln_results)
+    return {"ip": ip, "suggestions": suggestions, "msf_commands": plugin.get_msf_commands(ip)}
+
+@app.get("/exploit_mapper/mappings")
+async def exploit_mappings():
+    plugin = plugin_manager.get_plugin("Exploit-Mapper")
+    if not plugin: raise HTTPException(status_code=404)
+    return {"mappings": plugin.mappings}
+
+# ─── WEB SCANNER ─────────────────────────────────────────────────────
+class WebScanBody(BaseModel):
+    host: str
+    port: int = 80
+    https: bool = False
+
+@app.post("/web_scanner/scan")
+async def web_scan(body: WebScanBody):
+    plugin = plugin_manager.get_plugin("Web-Scanner")
+    if not plugin: raise HTTPException(status_code=404, detail="Web-Scanner not found")
+    asyncio.create_task(plugin.scan(body.host, body.port, body.https))
+    return {"status": "scan_launched", "host": body.host, "port": body.port}
+
+@app.get("/web_scanner/findings")
+async def web_findings():
+    plugin = plugin_manager.get_plugin("Web-Scanner")
+    if not plugin: raise HTTPException(status_code=404)
+    return {"findings": plugin.findings}
+
+# ─── HASH CRACKER ────────────────────────────────────────────────────
+class CrackBody(BaseModel):
+    hash: Optional[str] = None
+    shadow_path: Optional[str] = None
+    pcap_path: Optional[str] = None
+    bssid: Optional[str] = ""
+
+@app.post("/hash_cracker/crack")
+async def hash_crack(body: CrackBody):
+    plugin = plugin_manager.get_plugin("Hash-Cracker")
+    if not plugin: raise HTTPException(status_code=404, detail="Hash-Cracker not found")
+    if body.hash:
+        asyncio.create_task(plugin.crack_hash(body.hash))
+    elif body.shadow_path:
+        asyncio.create_task(plugin.crack_shadow(body.shadow_path))
+    elif body.pcap_path:
+        asyncio.create_task(plugin.crack_pcap(body.pcap_path, body.bssid or ""))
+    else:
+        raise HTTPException(status_code=400, detail="Provide hash, shadow_path, or pcap_path")
+    return {"status": "crack_launched"}
+
+@app.get("/hash_cracker/results")
+async def hash_results():
+    plugin = plugin_manager.get_plugin("Hash-Cracker")
+    if not plugin: raise HTTPException(status_code=404)
+    return {"results": plugin.results}
+
+# ─── OSINT ENRICHER ──────────────────────────────────────────────────
+@app.get("/osint/enrich")
+async def osint_enrich(ip: str):
+    plugin = plugin_manager.get_plugin("OSINT-Enricher")
+    if not plugin: raise HTTPException(status_code=404, detail="OSINT-Enricher not found")
+    result = await plugin.enrich(ip)
+    return result
+
+@app.post("/osint/enrich_all")
+async def osint_enrich_all():
+    plugin = plugin_manager.get_plugin("OSINT-Enricher")
+    if not plugin: raise HTTPException(status_code=404)
+    asyncio.create_task(plugin.enrich_batch(target_store.devices))
+    return {"status": "enrichment_launched", "hosts": len(target_store.devices)}
+
+# ─── REPORT BUILDER ──────────────────────────────────────────────────
+@app.post("/report/generate")
+async def generate_report(campaign_id: str = None):
+    plugin = plugin_manager.get_plugin("Report-Builder")
+    if not plugin: raise HTTPException(status_code=404, detail="Report-Builder not found")
+    result = await plugin.generate(campaign_id)
+    return result
+
+@app.get("/report/{campaign_id}/html")
+async def get_report_html(campaign_id: str):
+    from fastapi.responses import FileResponse
+    plugin = plugin_manager.get_plugin("Report-Builder")
+    if not plugin: raise HTTPException(status_code=404)
+    result = await plugin.generate(campaign_id)
+    html_path = result.get("html_path")
+    if not html_path or not os.path.exists(html_path):
+        raise HTTPException(status_code=500, detail="Report generation failed")
+    return FileResponse(html_path, media_type="text/html")
+
+# ─── PIPELINE ENGINE ─────────────────────────────────────────────────
+class PipelineRuleBody(BaseModel):
+    rule: str
+    enabled: bool
+
+@app.get("/pipeline/status")
+async def pipeline_status():
+    return pipeline_engine.get_status()
+
+@app.post("/pipeline/rule")
+async def pipeline_set_rule(body: PipelineRuleBody):
+    ok = pipeline_engine.set_rule(body.rule, body.enabled)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Rule '{body.rule}' not found")
+    return {"rule": body.rule, "enabled": body.enabled}
 
 @app.websocket("/ws/recon")
 async def recon_websocket(websocket: WebSocket):

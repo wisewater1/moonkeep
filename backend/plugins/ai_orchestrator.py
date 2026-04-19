@@ -186,32 +186,60 @@ class AIOrchestratorPlugin(BasePlugin):
         plan = []
         instr = instruction.lower()
 
-        if "pivot" in instr:
+        if "full" in instr or "chain" in instr or "complete" in instr or ("all" in instr and len(instr) < 20):
+            plan.append({"step": 1, "plugin": "Scanner",        "action": "scan",        "params": {}})
+            plan.append({"step": 2, "plugin": "OSINT-Enricher", "action": "enrich",      "params": {}})
+            plan.append({"step": 3, "plugin": "Vuln-Scanner",   "action": "vuln_scan",   "params": {}})
+            plan.append({"step": 4, "plugin": "Exploit-Mapper", "action": "map",         "params": {}})
+            plan.append({"step": 5, "plugin": "Secret-Hunter",  "action": "hunt",        "params": {}})
+            plan.append({"step": 6, "plugin": "Cred-Spray",     "action": "spray",       "params": {}})
+            plan.append({"step": 7, "plugin": "Post-Exploit",   "action": "pe_pivot",    "params": {"target_ip": "AUTO"}})
+            plan.append({"step": 8, "plugin": "Report-Builder", "action": "report",      "params": {}})
+        elif "pivot" in instr:
             plan.append({"step": 1, "plugin": "Scanner",        "action": "scan",        "params": {}})
             plan.append({"step": 2, "plugin": "Vuln-Scanner",   "action": "vuln_scan",   "params": {}})
             plan.append({"step": 3, "plugin": "Post-Exploit",   "action": "pe_pivot",    "params": {"target_ip": "AUTO"}})
         elif "fuzz" in instr:
             plan.append({"step": 1, "plugin": "Fuzzer",         "action": "fuzz_mdns",   "params": {}})
+            plan.append({"step": 2, "plugin": "Fuzzer",         "action": "fuzz_snmp",   "params": {}})
+        elif "web" in instr or "webapp" in instr:
+            plan.append({"step": 1, "plugin": "Scanner",        "action": "scan",        "params": {}})
+            plan.append({"step": 2, "plugin": "Web-Scanner",    "action": "web_scan",    "params": {}})
+            plan.append({"step": 3, "plugin": "Exploit-Mapper", "action": "map",         "params": {}})
         elif "scan" in instr:
             plan.append({"step": 1, "plugin": "Scanner",        "action": "scan",        "params": {}})
-            plan.append({"step": 2, "plugin": "Vuln-Scanner",   "action": "vuln_scan",   "params": {}})
-            plan.append({"step": 3, "plugin": "AI-Orchestrator","action": "analyze",     "params": {}})
+            plan.append({"step": 2, "plugin": "OSINT-Enricher", "action": "enrich",      "params": {}})
+            plan.append({"step": 3, "plugin": "Vuln-Scanner",   "action": "vuln_scan",   "params": {}})
+            plan.append({"step": 4, "plugin": "Exploit-Mapper", "action": "map",         "params": {}})
+            plan.append({"step": 5, "plugin": "AI-Orchestrator","action": "analyze",     "params": {}})
         elif "exploit" in instr:
             plan.append({"step": 1, "plugin": "Vuln-Scanner",   "action": "vuln_scan",   "params": {}})
-            plan.append({"step": 2, "plugin": "Post-Exploit",   "action": "pe_pivot",    "params": {"target_ip": "AUTO"}})
-            plan.append({"step": 3, "plugin": "Post-Exploit",   "action": "persistence", "params": {}})
+            plan.append({"step": 2, "plugin": "Exploit-Mapper", "action": "map",         "params": {}})
+            plan.append({"step": 3, "plugin": "Post-Exploit",   "action": "pe_pivot",    "params": {"target_ip": "AUTO"}})
+            plan.append({"step": 4, "plugin": "Post-Exploit",   "action": "persistence", "params": {}})
         elif "exfil" in instr:
             plan.append({"step": 1, "plugin": "Secret-Hunter",  "action": "hunt",        "params": {}})
             plan.append({"step": 2, "plugin": "Post-Exploit",   "action": "exfiltrate",  "params": {}})
-            plan.append({"step": 3, "plugin": "Sniffer",        "action": "sniff_start", "params": {}})
-        elif "credential" in instr:
+            plan.append({"step": 3, "plugin": "Hash-Cracker",   "action": "crack",       "params": {}})
+            plan.append({"step": 4, "plugin": "Sniffer",        "action": "sniff_start", "params": {}})
+        elif "credential" in instr or "spray" in instr:
             plan.append({"step": 1, "plugin": "Secret-Hunter",  "action": "hunt",        "params": {}})
             plan.append({"step": 2, "plugin": "Sniffer",        "action": "sniff_start", "params": {}})
-            plan.append({"step": 3, "plugin": "AI-Orchestrator","action": "analyze",     "params": {}})
+            plan.append({"step": 3, "plugin": "Cred-Spray",     "action": "spray",       "params": {}})
+            plan.append({"step": 4, "plugin": "AI-Orchestrator","action": "analyze",     "params": {}})
+        elif "crack" in instr or "hash" in instr:
+            plan.append({"step": 1, "plugin": "Post-Exploit",   "action": "exfiltrate",  "params": {}})
+            plan.append({"step": 2, "plugin": "Hash-Cracker",   "action": "crack",       "params": {}})
+            plan.append({"step": 3, "plugin": "Cred-Spray",     "action": "spray",       "params": {}})
         elif "lateral" in instr:
             plan.append({"step": 1, "plugin": "Scanner",        "action": "scan",        "params": {}})
             plan.append({"step": 2, "plugin": "Post-Exploit",   "action": "pe_pivot",    "params": {"target_ip": "AUTO"}})
             plan.append({"step": 3, "plugin": "Spoofer",        "action": "spoof",       "params": {}})
+        elif "report" in instr:
+            plan.append({"step": 1, "plugin": "Report-Builder", "action": "report",      "params": {}})
+        elif "osint" in instr or "enrich" in instr:
+            plan.append({"step": 1, "plugin": "Scanner",        "action": "scan",        "params": {}})
+            plan.append({"step": 2, "plugin": "OSINT-Enricher", "action": "enrich",      "params": {}})
         else:
             plan.append({"step": 1, "plugin": "Secret-Hunter",  "action": "hunt",        "params": {}})
             plan.append({"step": 2, "plugin": "Scanner",        "action": "scan",        "params": {}})
@@ -300,7 +328,71 @@ class AIOrchestratorPlugin(BasePlugin):
                     session_id = ctx.get('pivot', {}).get('session_id', 'unknown')
                     paths = await plugin.exfiltrate_secrets(session_id)
                     ctx['exfil_paths'] = paths
-                    self.emit("EXFIL_RESULT", {"paths": paths})
+                    self.emit("EXFIL_COMPLETE", {"session": session_id, "files": paths})
+
+                elif plugin_name == "OSINT-Enricher" and action == "enrich":
+                    devices = ctx.get('devices', [])
+                    if not devices and self.target_store:
+                        devices = self.target_store.devices
+                    if devices:
+                        enrichments = await plugin.enrich_batch(devices)
+                        ctx['osint'] = enrichments
+
+                elif plugin_name == "Exploit-Mapper" and action == "map":
+                    all_vulns = ctx.get('vulns', {})
+                    all_findings = []
+                    for ip, findings_list in all_vulns.items():
+                        for f in findings_list:
+                            f['ip'] = ip
+                            all_findings.append(f)
+                    if all_findings:
+                        suggestions = plugin.map_cves(all_findings)
+                        ctx['exploits'] = suggestions
+
+                elif plugin_name == "Cred-Spray" and action == "spray":
+                    # Feed secrets found by Secret-Hunter into pool
+                    secrets = ctx.get('secrets', [])
+                    for s in secrets:
+                        preview = s.get('preview', '')
+                        if preview:
+                            plugin.add_credential(preview)
+                    # Register targets
+                    for d in ctx.get('devices', []):
+                        ip = d.get('ip')
+                        if ip:
+                            plugin.add_target(ip, [22, 21, 80, 443, 8080, 3306, 5432])
+                    hits = await plugin.run_spray()
+                    ctx['spray_hits'] = hits
+
+                elif plugin_name == "Hash-Cracker" and action == "crack":
+                    exfil_paths = ctx.get('exfil_paths', [])
+                    for f in exfil_paths:
+                        path = f if isinstance(f, str) else f.get('path', '')
+                        if '/shadow' in path and f.get('readable', True):
+                            await plugin.crack_shadow(path)
+
+                elif plugin_name == "Web-Scanner" and action == "web_scan":
+                    devices = ctx.get('devices', [])
+                    all_web = []
+                    for d in devices:
+                        ip = d.get('ip')
+                        if not ip:
+                            continue
+                        # Check if port 80 or 443 was open from vuln scan
+                        vulns = ctx.get('vulns', {}).get(ip, [])
+                        http_ports = [v['port'] for v in vulns
+                                      if v.get('state') == 'open' and v.get('port') in (80, 8080, 443, 8443)]
+                        if not http_ports:
+                            http_ports = [80]
+                        for port in http_ports:
+                            findings = await plugin.scan(ip, port=port, https=(port in (443, 8443)))
+                            all_web.extend(findings)
+                    ctx['web_findings'] = all_web
+
+                elif plugin_name == "Report-Builder" and action == "report":
+                    result = await plugin.generate()
+                    ctx['report'] = result
+                    self.emit("REPORT_GENERATED", result)
 
                 else:
                     await asyncio.sleep(1.5)
@@ -310,9 +402,13 @@ class AIOrchestratorPlugin(BasePlugin):
                 self.emit("ERROR", {"msg": f"Step {step['step']} failed: {str(e)}"})
 
         summary = {
-            "devices_found": len(ctx.get('devices', [])),
-            "vulns_found":   sum(len(v) for v in ctx.get('vulns', {}).values()),
-            "secrets_found": len(ctx.get('secrets', [])),
+            "devices_found":  len(ctx.get('devices', [])),
+            "vulns_found":    sum(len(v) for v in ctx.get('vulns', {}).values()),
+            "secrets_found":  len(ctx.get('secrets', [])),
+            "exploits_found": len(ctx.get('exploits', [])),
+            "spray_hits":     len(ctx.get('spray_hits', [])),
+            "web_findings":   len(ctx.get('web_findings', [])),
+            "report":         ctx.get('report', {}).get('html_path'),
         }
         self.emit("SUCCESS", {"msg": "Strike plan execution completed.", **summary})
 
