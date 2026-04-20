@@ -8,6 +8,7 @@ import subprocess
 
 class VulnScannerPlugin(BasePlugin):
     def __init__(self):
+        self.vulns: list = []
         self.vulns_db = {
             "SSH": {
                 "port": 22, "id": "CVE-2024-6387", "name": "regreSSHion", "cvss": 8.1,
@@ -363,6 +364,7 @@ class VulnScannerPlugin(BasePlugin):
             })
 
         if results:
+            self.vulns.extend(results)
             self.emit("VULN_RESULT", {"ip": ip, "count": len(results), "findings": results})
             if self.target_store and self.target_store.active_campaign:
                 for v in results:

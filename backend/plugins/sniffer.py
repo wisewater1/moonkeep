@@ -17,10 +17,13 @@ class SnifferPlugin(BasePlugin):
     def description(self) -> str:
         return "Professional DPI & Credential Harvester"
 
-    async def start(self):
-        self.sniffer = AsyncSniffer(prn=self._process_packet, store=False)
+    async def start(self, iface: str = None):
+        kwargs = {"prn": self._process_packet, "store": False}
+        if iface:
+            kwargs["iface"] = iface
+        self.sniffer = AsyncSniffer(**kwargs)
         self.sniffer.start()
-        print("Sniffer: Deep Packet Inspection mode ACTIVE.")
+        print(f"Sniffer: DPI active on {iface or 'default interface'}.")
 
     async def stop(self):
         if self.sniffer:

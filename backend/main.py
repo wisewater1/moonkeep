@@ -405,12 +405,15 @@ async def get_captured_credentials():
     if not plugin: raise HTTPException(status_code=404, detail="Sniffer plugin not found")
     return {"credentials": plugin.credentials}
 
+class SnifferStartBody(BaseModel):
+    iface: Optional[str] = None
+
 @app.post("/sniffer/start")
-async def sniffer_start():
+async def sniffer_start(body: SnifferStartBody = SnifferStartBody()):
     plugin = plugin_manager.get_plugin("Sniffer")
     if plugin:
-        await plugin.start()
-        return {"status": "sniffer_active", "mode": "DPI"}
+        await plugin.start(iface=body.iface)
+        return {"status": "sniffer_active", "mode": "DPI", "iface": body.iface or "default"}
     return cap_engine.run_command("net.sniff on")
 
 @app.post("/sniffer/stop")

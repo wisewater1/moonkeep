@@ -679,7 +679,10 @@ const Dashboard = () => {
               }}>SCAN PIVOT: {activeTarget?.ip || 'AUTO'}</button>
               <button className="btn-primary btn-ghost" onClick={async () => {
                 const r = await apiCall(`/post_exploit/persistence?os=${postExploitOS}`);
-                if (r?.script) setPostExploitOutput(r.script);
+                if (r?.methods) {
+                  const fmt = Object.entries(r.methods).map(([name, cmd]) => `## ${name}\n${cmd}`).join('\n\n');
+                  setPostExploitOutput(`# ${(r.os || postExploitOS).toUpperCase()} Persistence Payloads\n\n${fmt}`);
+                } else if (r?.script) setPostExploitOutput(r.script);
                 else if (r?.payload) setPostExploitOutput(r.payload);
                 else if (r) setPostExploitOutput(JSON.stringify(r, null, 2));
               }}>GEN PERSISTENCE</button>
