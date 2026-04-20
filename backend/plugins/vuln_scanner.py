@@ -364,7 +364,12 @@ class VulnScannerPlugin(BasePlugin):
             })
 
         if results:
-            self.vulns.extend(results)
+            existing = {(v.get("ip",""), v.get("cve"), v.get("port")) for v in self.vulns}
+            for v in results:
+                v["ip"] = ip
+                if (ip, v.get("cve"), v.get("port")) not in existing:
+                    self.vulns.append(v)
+                    existing.add((ip, v.get("cve"), v.get("port")))
             self.emit("VULN_RESULT", {"ip": ip, "count": len(results), "findings": results})
             if self.target_store and self.target_store.active_campaign:
                 for v in results:

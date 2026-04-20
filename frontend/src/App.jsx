@@ -247,8 +247,15 @@ const Dashboard = () => {
           if (data.type === 'SECRET_FOUND' && data.data?.type) {
             setSecretFindings(prev => [...prev, data.data]);
           }
+          if (data.type === 'PACKET' && data.data) {
+            setPackets(prev => [data.data, ...prev].slice(0, 150));
+          }
           if (data.type === 'VULN_RESULT' && data.data?.findings) {
-            setVulnCards(prev => [...prev, ...data.data.findings]);
+            setVulnCards(prev => {
+              const existing = new Set(prev.map(v => `${v.ip}-${v.cve}-${v.port}`));
+              const fresh = data.data.findings.filter(v => !existing.has(`${v.ip}-${v.cve}-${v.port}`));
+              return [...prev, ...fresh];
+            });
           }
 
           const newToast = { id: Date.now() + Math.random(), ...data };
