@@ -372,6 +372,12 @@ async def fuzz_mdns(ip: str = "224.0.0.251"):
     if not plugin: raise HTTPException(status_code=404)
     return await plugin.fuzz_mdns(ip)
 
+@app.post("/fuzzer/snmp")
+async def fuzz_snmp(ip: str):
+    plugin = plugin_manager.get_plugin("Fuzzer")
+    if not plugin: raise HTTPException(status_code=404)
+    return await plugin.fuzz_snmp(ip)
+
 # HID-BLE ELITE ENDPOINTS
 @app.get("/hid_ble/scan")
 async def hid_ble_scan():

@@ -225,6 +225,61 @@ body {
 .severity-medium   { color: #eab308; }
 .severity-low      { color: #6b7280; }
 
+/* Danger button variant */
+.btn-danger {
+  background: rgba(239, 68, 68, 0.08) !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+  color: #f87171 !important;
+}
+.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.18) !important;
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.3) !important;
+}
+
+/* Ghost / secondary button */
+.btn-ghost {
+  background: transparent !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: var(--text-secondary) !important;
+}
+.btn-ghost:hover {
+  background: rgba(255,255,255,0.05) !important;
+  color: white !important;
+}
+
+/* Sidebar category label */
+.nav-category {
+  font-size: 0.42rem;
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  padding: 0.7rem 0.5rem 0.2rem;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* Pulsing live indicator */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+.pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* Input focus state */
+input:focus, select:focus {
+  outline: none;
+  border-color: rgba(99, 102, 241, 0.6) !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.12);
+}
+
+/* Table row hover */
+tbody tr:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
 ::-webkit-scrollbar {
   width: 4px;
 }

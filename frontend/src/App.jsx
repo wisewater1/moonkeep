@@ -142,7 +142,22 @@ const Dashboard = () => {
   const [cliOutput, setCliOutput] = useState([{ text: '═══ NATIVE CAP ENGINE ═══', color: '#a78bfa' }, { text: 'Type "help" for available commands.', color: '#666' }]);
   const [suggestion, setSuggestion] = useState("");
   const cliRef = useRef(null);
+  const tacticalFeedRef = useRef(null);
   const inputRef = useRef(null);
+
+  const PLUGIN_CATEGORIES = {
+    RECON:     ['Scanner', 'Wardriver', 'OSINT-Enricher', 'Recon-Console'],
+    WIFI:      ['WiFi-Strike', 'Rogue-AP', 'Rogue-RADIUS', 'WiFi-Fingerprinter', 'Mesh-Injector'],
+    INTERCEPT: ['Sniffer', 'Proxy', 'Spoofer'],
+    EXPLOIT:   ['Post-Exploit', 'Fuzzer', 'HID-BLE-Strike', 'Cyber-Strike'],
+    INTEL:     ['AI-Orchestrator', 'Secret-Hunter', 'Vuln-Scanner', 'Exploit-Mapper', 'Web-Scanner', 'Identity-Correlator'],
+    CREDS:     ['Cred-Spray', 'Hash-Cracker', 'Cred-Genome', 'Baseline-Calibrator'],
+    REPORT:    ['Report-Builder'],
+  };
+  const CAT_COLORS = {
+    RECON: '#06b6d4', WIFI: '#f97316', INTERCEPT: '#a78bfa',
+    EXPLOIT: '#ef4444', INTEL: '#22c55e', CREDS: '#f59e0b', REPORT: '#94a3b8',
+  };
 
   const CLI_COMMANDS = [
     'net.probe on', 'net.probe off', 'net.recon on', 'net.recon off', 'net.show',
@@ -261,6 +276,13 @@ const Dashboard = () => {
     }, 4000);
     return () => clearInterval(poll);
   }, [activePlugin, rogueAPActive, rogueRADIUSActive]);
+
+  // Auto-scroll tactical feed on new entries
+  useEffect(() => {
+    if (tacticalFeedRef.current) {
+      tacticalFeedRef.current.scrollTop = tacticalFeedRef.current.scrollHeight;
+    }
+  }, [strikeLog]);
 
   // Bettercap status polling
   useEffect(() => {
@@ -426,7 +448,7 @@ const Dashboard = () => {
                         DEAUTH
                       </button>
                       <button className="btn-primary" style={{ fontSize: '0.55rem', padding: '0.35rem' }}
-                        onClick={() => apiCall('/wifi/capture', 'POST', { bssid: n.mac })}>
+                        onClick={() => apiCall(`/wifi/capture?bssid=${encodeURIComponent(n.mac)}`, 'POST')}>
                         LISTEN (EAPOL)
                       </button>
                       <button className="btn-primary" style={{ fontSize: '0.55rem', padding: '0.35rem', gridColumn: 'span 2', background: autoAttacking.has(n.mac) ? 'rgba(239,68,68,0.25)' : undefined, borderColor: autoAttacking.has(n.mac) ? '#ef4444' : undefined }}
@@ -463,7 +485,7 @@ const Dashboard = () => {
             <div className="glass-card" style={{ padding: '1rem', border: '1px solid rgba(239,68,68,0.35)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                 <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#f87171' }}>
-                  EVIL TWIN AP&nbsp;&nbsp;<span style={{ color: rogueAPActive ? '#4ade80' : '#6b7280' }}>{rogueAPActive ? '● LIVE' : '○ IDLE'}</span>
+                  EVIL TWIN AP&nbsp;&nbsp;<span className={rogueAPActive ? 'pulse' : ''} style={{ color: rogueAPActive ? '#4ade80' : '#6b7280' }}>{rogueAPActive ? '● LIVE' : '○ IDLE'}</span>
                 </span>
                 <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
                   <select value={rogueAPMode} onChange={e => setRogueAPMode(e.target.value)}
@@ -473,7 +495,7 @@ const Dashboard = () => {
                   </select>
                   <input value={rogueAPSSID} onChange={e => setRogueAPSSID(e.target.value)} placeholder="SSID"
                     style={{ width: '90px', fontSize: '0.65rem', background: 'rgba(0,0,0,0.6)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '4px', padding: '0.25rem 0.4rem' }} />
-                  <button className="btn-primary" style={{ fontSize: '0.6rem' }} onClick={async () => {
+                  <button className={`btn-primary ${rogueAPActive ? 'btn-danger' : ''}`} style={{ fontSize: '0.6rem' }} onClick={async () => {
                     if (rogueAPActive) {
                       await apiCall('/rogue_ap/stop', 'POST', {});
                       setRogueAPActive(false);
@@ -508,12 +530,12 @@ const Dashboard = () => {
             <div className="glass-card" style={{ padding: '1rem', border: '1px solid rgba(168,85,247,0.35)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                 <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#a855f7' }}>
-                  WPA-ENTERPRISE TRAP&nbsp;&nbsp;<span style={{ color: rogueRADIUSActive ? '#4ade80' : '#6b7280' }}>{rogueRADIUSActive ? '● LIVE' : '○ IDLE'}</span>
+                  WPA-ENTERPRISE TRAP&nbsp;&nbsp;<span className={rogueRADIUSActive ? 'pulse' : ''} style={{ color: rogueRADIUSActive ? '#4ade80' : '#6b7280' }}>{rogueRADIUSActive ? '● LIVE' : '○ IDLE'}</span>
                 </span>
                 <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
                   <input value={rogueRADIUSSSID} onChange={e => setRogueRADIUSSSID(e.target.value)} placeholder="Corp SSID"
                     style={{ width: '100px', fontSize: '0.65rem', background: 'rgba(0,0,0,0.6)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '4px', padding: '0.25rem 0.4rem' }} />
-                  <button className="btn-primary" style={{ fontSize: '0.6rem' }} onClick={async () => {
+                  <button className={`btn-primary ${rogueRADIUSActive ? 'btn-danger' : ''}`} style={{ fontSize: '0.6rem' }} onClick={async () => {
                     if (rogueRADIUSActive) {
                       await apiCall('/rogue_radius/stop', 'POST', {});
                       setRogueRADIUSActive(false);
@@ -554,7 +576,7 @@ const Dashboard = () => {
                 <p style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>Active Target: {devices[0]?.ip || "DISCOVERY REQUIRED"}</p>
               </div>
               <button
-                className={`btn-primary ${spoofing ? 'active' : ''}`}
+                className={`btn-primary ${spoofing ? 'btn-danger' : ''}`}
                 style={{ height: '100px', fontSize: '1rem' }}
                 onClick={async () => {
                   const action = spoofing ? '/spoofer/stop' : '/spoofer/start';
@@ -595,8 +617,8 @@ const Dashboard = () => {
               </button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <button className="btn-primary ghost" onClick={() => apiCall('/post_exploit/persistence', 'GET', { os: 'windows' })}>GENERATE PERSISTENCE</button>
-              <button className="btn-primary ghost" onClick={() => apiCall('/post_exploit/exfiltrate', 'POST', { target_session_id: activeTarget?.ip })}>HARVEST DATA</button>
+              <button className="btn-primary btn-ghost" onClick={() => apiCall('/post_exploit/persistence', 'GET', { os: 'windows' })}>GENERATE PERSISTENCE</button>
+              <button className="btn-primary btn-ghost" onClick={() => apiCall('/post_exploit/exfiltrate', 'POST', { target_session_id: activeTarget?.ip })}>HARVEST DATA</button>
             </div>
           </div>
         );
@@ -610,8 +632,8 @@ const Dashboard = () => {
             </div>
             <p style={{ fontSize: '0.8rem', marginBottom: '1rem' }}>Targeting: {activeTarget?.ip || "None Selected"}</p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <button className="btn-primary" onClick={() => apiCall('/fuzzer/snmp', 'POST', { ip: activeTarget?.ip })}>FUZZ SNMP</button>
-              <button className="btn-primary" onClick={() => apiCall('/fuzzer/mdns', 'POST', { ip: activeTarget?.ip })}>FUZZ MDNS</button>
+              <button className="btn-primary" onClick={() => apiCall(`/fuzzer/snmp?ip=${encodeURIComponent(activeTarget?.ip || '')}`, 'POST')}>FUZZ SNMP</button>
+              <button className="btn-primary" onClick={() => apiCall(`/fuzzer/mdns?ip=${encodeURIComponent(activeTarget?.ip || '224.0.0.251')}`, 'POST')}>FUZZ MDNS</button>
             </div>
           </div>
         );
@@ -623,7 +645,7 @@ const Dashboard = () => {
             <p style={{ fontSize: '0.8rem', marginBottom: '1.5rem' }}>Active Vector: {activeTarget?.mac || "AA:BB:CC:11:22:33"}</p>
             <div style={{ display: 'flex', gap: '1rem' }}>
               <button className="btn-primary" style={{ flex: 1 }} onClick={() => apiCall('/hid_ble/scan')}>BLE RECON</button>
-              <button className="btn-primary" style={{ flex: 1 }} onClick={() => apiCall('/hid_ble/inject', 'POST', { target_mac: activeTarget?.mac || 'AA:BB:CC:11:22:33' })}>MOUSEJACK INJ</button>
+              <button className="btn-primary" style={{ flex: 1 }} onClick={() => apiCall(`/hid_ble/inject?target_mac=${encodeURIComponent(activeTarget?.mac || 'AA:BB:CC:11:22:33')}`, 'POST')}>MOUSEJACK INJ</button>
             </div>
           </div>
         );
@@ -702,7 +724,7 @@ const Dashboard = () => {
                 setCyberStrikeLog([]);
                 await apiCall('/cyber_strike/start', 'POST', { role: cyberStrikeRole });
               }}>ENGAGE {cyberStrikeRole.toUpperCase()}</button>
-              <button className="btn-primary" style={{ opacity: 0.7 }} onClick={() => apiCall('/cyber_strike/stop', 'POST')}>ABORT</button>
+              <button className="btn-primary btn-danger" onClick={() => apiCall('/cyber_strike/stop', 'POST')}>ABORT</button>
             </div>
             <div style={{ flex: 1, background: '#000', padding: '1rem', marginTop: '1rem', borderRadius: '6px', overflowY: 'auto', border: '1px solid var(--glass-border)', fontFamily: 'monospace', fontSize: '0.75rem' }}>
               {cyberStrikeLog.map((log, i) => (
@@ -765,7 +787,7 @@ const Dashboard = () => {
             <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem', alignItems: 'center' }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>PORT</span>
               <input type="number" value={proxyPort} onChange={e => setProxyPort(Number(e.target.value))} style={{ width: '80px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'var(--neo-cyan)', padding: '0.4rem' }} />
-              <button className={`btn-primary ${proxyActive ? 'ghost' : ''}`} onClick={() => {
+              <button className={`btn-primary ${proxyActive ? 'btn-danger' : ''}`} onClick={() => {
                 apiCall(proxyActive ? '/proxy/stop' : '/proxy/start', 'POST', proxyActive ? null : { port: proxyPort });
                 setProxyActive(!proxyActive);
               }}>{proxyActive ? 'STOP PROXY' : 'START PROXY'}</button>
@@ -832,8 +854,8 @@ const Dashboard = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3>CVE → Exploit Mapper</h3>
               <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
-                const r = await apiCall('/exploit_mapper/map', 'POST', { target: activeTarget?.ip });
-                if (r?.mappings) setExploitMappings(r.mappings);
+                const r = await apiCall(`/exploit_mapper/map?target=${encodeURIComponent(activeTarget?.ip || '')}`, 'POST');
+                if (r?.suggestions) setExploitMappings(r.suggestions);
               }}>MAP EXPLOITS FOR {activeTarget?.ip || 'ALL'}</button>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -866,8 +888,15 @@ const Dashboard = () => {
               <input value={webScanTarget} onChange={e => setWebScanTarget(e.target.value)} placeholder="https://target.example.com"
                 style={{ flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
               <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
-                const url = webScanTarget || `http://${activeTarget?.ip}`;
-                await apiCall('/web_scanner/scan', 'POST', { url });
+                const raw = webScanTarget || `http://${activeTarget?.ip}`;
+                let host = raw, port = 80, https = false;
+                try {
+                  const u = new URL(raw.includes('://') ? raw : 'http://' + raw);
+                  host = u.hostname;
+                  https = u.protocol === 'https:';
+                  port = u.port ? parseInt(u.port) : (https ? 443 : 80);
+                } catch { host = raw.replace(/^https?:\/\//, '').split('/')[0].split(':')[0]; }
+                await apiCall('/web_scanner/scan', 'POST', { host, port, https });
                 setTimeout(async () => {
                   const r = await apiCall('/web_scanner/findings');
                   if (r?.findings) setWebScanFindings(r.findings);
@@ -1310,25 +1339,60 @@ const Dashboard = () => {
     <div className="dashboard-container">
       <aside className="sidebar">
         <div>
-          <h1 className="accent-text" style={{ fontSize: '1.6rem' }}>MOONKEEP v2</h1>
-          <p style={{ fontSize: '0.6rem', letterSpacing: '4px', fontWeight: 900, color: 'var(--text-secondary)' }}>SOVEREIGN ELITE</p>
+          <h1 className="accent-text" style={{ fontSize: '1.6rem' }}>MOONKEEP</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.15rem' }}>
+            <span style={{ fontSize: '0.55rem', letterSpacing: '3px', fontWeight: 900, color: 'var(--text-secondary)' }}>SOVEREIGN ELITE</span>
+            <span style={{ fontSize: '0.45rem', background: 'rgba(99,102,241,0.2)', border: '1px solid rgba(99,102,241,0.4)', color: '#a78bfa', padding: '0.1rem 0.3rem', borderRadius: '3px', fontWeight: 900, letterSpacing: '1px' }}>v2</span>
+          </div>
         </div>
 
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1, overflowY: 'auto' }}>
-          {plugins.map(p => (
-            <button
-              key={p.name}
-              className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
-              onClick={() => setActivePlugin(p.name)}
-            >
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: 0, flex: 1, overflowY: 'auto', paddingRight: '0.1rem' }}>
+          {Object.entries(PLUGIN_CATEGORIES).map(([cat, catNames]) => {
+            const available = plugins.filter(p => catNames.includes(p.name));
+            if (available.length === 0) return null;
+            return (
+              <div key={cat}>
+                <div className="nav-category" style={{ color: CAT_COLORS[cat] }}>{cat}</div>
+                {available.map(p => (
+                  <button
+                    key={p.name}
+                    className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
+                    style={{ marginBottom: '0.15rem', paddingLeft: '0.6rem' }}
+                    onClick={() => setActivePlugin(p.name)}
+                  >
+                    <span style={{
+                      width: 5, height: 5, borderRadius: '50%', flexShrink: 0,
+                      background: activePlugin === p.name ? CAT_COLORS[cat] : 'rgba(255,255,255,0.15)',
+                      transition: 'background 0.2s',
+                    }} />
+                    {p.name.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+          {/* Catch any plugin not in categories */}
+          {plugins.filter(p => !Object.values(PLUGIN_CATEGORIES).flat().includes(p.name)).map(p => (
+            <button key={p.name} className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
+              style={{ marginBottom: '0.15rem' }} onClick={() => setActivePlugin(p.name)}>
               {p.name.toUpperCase()}
             </button>
           ))}
         </nav>
 
-        <div className="glass-card" style={{ padding: '0.8rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span className="status-badge active" style={{ fontSize: '0.5rem' }}>EPIC.SYSTEM</span>
-          <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>8001</span>
+        <div className="glass-card" style={{ padding: '0.6rem 0.8rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+            <span className={`status-badge ${bcapStatus.running ? 'active' : ''}`} style={{ fontSize: '0.45rem' }}>
+              {bcapStatus.running ? 'ENGINE LIVE' : 'ENGINE IDLE'}
+            </span>
+            <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)' }}>{plugins.length} modules</span>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <span style={{ fontSize: '0.65rem', color: 'var(--neo-cyan)', fontWeight: 700 }}>:8001</span>
+            {bcapStatus.active_modules?.length > 0 && (
+              <div style={{ fontSize: '0.5rem', color: '#f59e0b', marginTop: '0.1rem' }}>{bcapStatus.active_modules.length} active</div>
+            )}
+          </div>
         </div>
       </aside>
 
@@ -1405,7 +1469,7 @@ const Dashboard = () => {
             </div>
 
             {/* Row 2: Tactical Feed — fixed height, scrollable */}
-            <div style={{ background: 'black', borderRadius: '6px', border: '1px solid var(--glass-border)', padding: '0.5rem', overflowY: 'auto', fontFamily: 'Fira Code, monospace', fontSize: '0.6rem' }}>
+            <div ref={tacticalFeedRef} style={{ background: 'black', borderRadius: '6px', border: '1px solid var(--glass-border)', padding: '0.5rem', overflowY: 'auto', fontFamily: 'Fira Code, monospace', fontSize: '0.6rem' }}>
               {strikeLog.map((log, i) => (
                 <div key={i} style={{
                   margin: '0.2rem 0',
@@ -1484,7 +1548,7 @@ const Dashboard = () => {
             </div>
 
             {/* Row 4: Action Button — always pinned at bottom */}
-            <button className="btn-primary active" style={{ height: '100%', fontSize: '0.7rem', flexShrink: 0 }} onClick={() => apiCall('/cyber_strike/start')}>INVOKE PROTOCOL</button>
+            <button className="btn-primary active" style={{ height: '100%', fontSize: '0.7rem', flexShrink: 0 }} onClick={() => apiCall('/cyber_strike/start', 'POST', { role: cyberStrikeRole })}>INVOKE PROTOCOL</button>
           </aside>
         </div>
       </main>
