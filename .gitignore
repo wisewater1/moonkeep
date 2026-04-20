@@ -12,3 +12,4 @@ backend/logs/
 .idea/
 frontend/node_modules/
 backend/venv/
+*.mjs
