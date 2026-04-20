@@ -116,13 +116,16 @@ print("NativeCapEngine online — type 'help' in the CLI")
 
 @app.get("/interfaces")
 def list_interfaces():
-    from scapy.all import conf
+    try:
+        from scapy.all import conf
+    except ImportError:
+        return []
     ifaces = []
     for iface in conf.ifaces.values():
         ifaces.append({
-            "name": iface.name,
-            "description": iface.description,
-            "ip": iface.ip
+            "name": getattr(iface, "name", None),
+            "description": getattr(iface, "description", None),
+            "ip": getattr(iface, "ip", None),
         })
     return ifaces
 
