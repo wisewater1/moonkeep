@@ -1,5 +1,6 @@
 from core.plugin_manager import BasePlugin
 from scapy.all import Dot11, Dot11Deauth, RadioTap, sendp, sniff, EAPOL, wrpcap
+import asyncio
 import threading
 import subprocess
 import re
