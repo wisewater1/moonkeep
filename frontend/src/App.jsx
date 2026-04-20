@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import 'xterm/css/xterm.css';
@@ -163,6 +163,16 @@ const Dashboard = () => {
   const cliRef = useRef(null);
   const tacticalFeedRef = useRef(null);
   const inputRef = useRef(null);
+  const cmdInputRef = useRef(null);
+
+  // ── Productivity Features ──────────────────────────────────────
+  const [cmdOpen, setCmdOpen]           = useState(false);
+  const [cmdQuery, setCmdQuery]         = useState('');
+  const [splitPanel, setSplitPanel]     = useState(null);
+  const [logDrawerOpen, setLogDrawerOpen] = useState(false);
+  const [redOpsMode, setRedOpsMode]     = useState(() => localStorage.getItem('moonkeep_red_ops') === '1');
+  const [favPlugins, setFavPlugins]     = useState(() => { try { return JSON.parse(localStorage.getItem('moonkeep_favs') || '[]'); } catch { return []; } });
+  const [pluginFindings, setPluginFindings] = useState({});
 
   const PLUGIN_CATEGORIES = {
     RECON:     ['Scanner', 'Wardriver', 'OSINT-Enricher', 'Recon-Console'],
@@ -201,6 +211,41 @@ const Dashboard = () => {
 
   const ws = useRef(null);
 
+  // ── Red-ops theme ──────────────────────────────────────────────
+  useEffect(() => {
+    document.documentElement.dataset.theme = redOpsMode ? 'red' : 'dark';
+    localStorage.setItem('moonkeep_red_ops', redOpsMode ? '1' : '0');
+  }, [redOpsMode]);
+
+  // ── Session persistence ────────────────────────────────────────
+  useEffect(() => {
+    try { const t = localStorage.getItem('moonkeep_target'); if (t) setActiveTarget(JSON.parse(t)); } catch {}
+    try { const p = localStorage.getItem('moonkeep_plugin'); if (p) setActivePlugin(p); } catch {}
+    try { const v = localStorage.getItem('moonkeep_vulns');  if (v) setVulnCards(JSON.parse(v)); } catch {}
+    try { const c = localStorage.getItem('moonkeep_creds');  if (c) setCapturedCreds(JSON.parse(c)); } catch {}
+  }, []);
+  useEffect(() => { try { localStorage.setItem('moonkeep_target', JSON.stringify(activeTarget)); } catch {} }, [activeTarget]);
+  useEffect(() => { try { localStorage.setItem('moonkeep_plugin', activePlugin); } catch {} }, [activePlugin]);
+  useEffect(() => { try { localStorage.setItem('moonkeep_vulns', JSON.stringify(vulnCards.slice(-100))); } catch {} }, [vulnCards]);
+  useEffect(() => { try { localStorage.setItem('moonkeep_creds', JSON.stringify(capturedCreds.slice(-100))); } catch {} }, [capturedCreds]);
+  useEffect(() => { try { localStorage.setItem('moonkeep_favs', JSON.stringify(favPlugins)); } catch {} }, [favPlugins]);
+
+  // ── Ctrl+K command palette ─────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); setCmdOpen(o => !o); setCmdQuery(''); }
+      if (e.key === 'Escape') { setCmdOpen(false); setSplitPanel(null); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => { if (cmdOpen) setTimeout(() => cmdInputRef.current?.focus(), 30); }, [cmdOpen]);
+
+  const toggleFav = useCallback((name) => {
+    setFavPlugins(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
+  }, []);
+
   useEffect(() => {
     // Force path sync
     if (window.location.pathname !== "/") window.history.replaceState({}, "", "/");
@@ -210,7 +255,8 @@ const Dashboard = () => {
         const res = await fetch('http://localhost:8001/plugins');
         const data = await res.json();
         setPlugins([...data, { name: 'Recon-Console' }]);
-        if (data.length > 0) setActivePlugin(data[0].name);
+        const savedPlugin = localStorage.getItem('moonkeep_plugin');
+        if (!savedPlugin && data.length > 0) setActivePlugin(data[0].name);
 
         const campRes = await fetch('http://localhost:8001/campaigns');
         const campData = await campRes.json();
@@ -243,9 +289,11 @@ const Dashboard = () => {
           }
           if (data.type === 'CREDENTIAL_FOUND' || data.type === 'HARVEST') {
             setCapturedCreds(prev => [...prev.slice(-200), msg]);
+            setPluginFindings(prev => ({ ...prev, Sniffer: (prev.Sniffer || 0) + 1, 'Cred-Spray': (prev['Cred-Spray'] || 0) + 1 }));
           }
           if (data.type === 'SECRET_FOUND' && data.data?.type) {
             setSecretFindings(prev => [...prev, data.data]);
+            setPluginFindings(prev => ({ ...prev, 'Secret-Hunter': (prev['Secret-Hunter'] || 0) + 1 }));
           }
           if (data.type === 'PACKET' && data.data) {
             setPackets(prev => [data.data, ...prev].slice(0, 150));
@@ -256,6 +304,7 @@ const Dashboard = () => {
               const fresh = data.data.findings.filter(v => !existing.has(`${v.ip}-${v.cve}-${v.port}`));
               return [...prev, ...fresh];
             });
+            setPluginFindings(prev => ({ ...prev, 'Vuln-Scanner': (prev['Vuln-Scanner'] || 0) + (data.data.findings?.length || 0) }));
           }
 
           const newToast = { id: Date.now() + Math.random(), ...data };
@@ -399,10 +448,10 @@ const Dashboard = () => {
     } catch (err) { }
   };
 
-  const renderModuleUI = () => {
-    if (!activePlugin) return <div className="glass-card">INITIALIZING VECTORS...</div>;
+  const renderModuleUI = (plugin = activePlugin) => {
+    if (!plugin) return <div className="glass-card">INITIALIZING VECTORS...</div>;
 
-    switch (activePlugin) {
+    switch (plugin) {
       case "Scanner":
         return (
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -1602,12 +1651,12 @@ const Dashboard = () => {
         return (
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ textAlign: 'center' }}>
-              <h3 style={{ color: 'var(--text-secondary)' }}>{activePlugin.toUpperCase()}</h3>
+              <h3 style={{ color: 'var(--text-secondary)' }}>{plugin.toUpperCase()}</h3>
               <p style={{ marginTop: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Module loaded. No dedicated interface — use the CLI panel or API directly.</p>
               <button className="btn-primary" style={{ marginTop: '2rem', width: '220px' }} onClick={() => {
-                const slug = activePlugin.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+                const slug = plugin.toLowerCase().replace(/[^a-z0-9]+/g, '_');
                 apiCall(`/${slug}/start`, 'POST', {});
-              }}>START {activePlugin.toUpperCase()}</button>
+              }}>START {plugin.toUpperCase()}</button>
             </div>
           </div>
         );
@@ -1617,8 +1666,14 @@ const Dashboard = () => {
   return (
     <div className="dashboard-container">
       <aside className="sidebar">
+        {/* Logo + Ctrl+K hint */}
         <div>
-          <h1 className="accent-text" style={{ fontSize: '1.6rem' }}>MOONKEEP</h1>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <h1 className="accent-text" style={{ fontSize: '1.6rem' }}>MOONKEEP</h1>
+            <button className="cmd-palette-trigger" onClick={() => { setCmdOpen(true); setCmdQuery(''); }} title="Ctrl+K">
+              <span style={{ fontSize: '0.5rem', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '4px', padding: '0.15rem 0.35rem', fontFamily: 'Fira Code', letterSpacing: '1px' }}>⌘K</span>
+            </button>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.15rem' }}>
             <span style={{ fontSize: '0.55rem', letterSpacing: '3px', fontWeight: 900, color: 'var(--text-secondary)' }}>SOVEREIGN ELITE</span>
             <span style={{ fontSize: '0.45rem', background: 'rgba(99,102,241,0.2)', border: '1px solid rgba(99,102,241,0.4)', color: '#a78bfa', padding: '0.1rem 0.3rem', borderRadius: '3px', fontWeight: 900, letterSpacing: '1px' }}>v2</span>
@@ -1626,31 +1681,71 @@ const Dashboard = () => {
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', gap: 0, flex: 1, overflowY: 'auto', paddingRight: '0.1rem' }}>
+          {/* ── Favorites strip ── */}
+          {favPlugins.length > 0 && (
+            <div>
+              <div className="nav-category" style={{ color: '#f59e0b' }}>★ PINNED</div>
+              {favPlugins.map(name => {
+                const badge = pluginFindings[name];
+                return (
+                  <button key={name} className={`btn-primary nav-btn ${activePlugin === name ? 'active' : ''}`}
+                    style={{ marginBottom: '0.15rem', paddingLeft: '0.6rem', justifyContent: 'space-between' }}
+                    onClick={() => setActivePlugin(name)}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#f59e0b', flexShrink: 0 }} />
+                      {name.toUpperCase()}
+                    </span>
+                    {badge > 0 && <span className="nav-badge">{badge}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── Category nav ── */}
           {Object.entries(PLUGIN_CATEGORIES).map(([cat, catNames]) => {
             const available = plugins.filter(p => catNames.includes(p.name));
             if (available.length === 0) return null;
             return (
               <div key={cat}>
                 <div className="nav-category" style={{ color: CAT_COLORS[cat] }}>{cat}</div>
-                {available.map(p => (
-                  <button
-                    key={p.name}
-                    className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
-                    style={{ marginBottom: '0.15rem', paddingLeft: '0.6rem' }}
-                    onClick={() => setActivePlugin(p.name)}
-                  >
-                    <span style={{
-                      width: 5, height: 5, borderRadius: '50%', flexShrink: 0,
-                      background: activePlugin === p.name ? CAT_COLORS[cat] : 'rgba(255,255,255,0.15)',
-                      transition: 'background 0.2s',
-                    }} />
-                    {p.name.toUpperCase()}
-                  </button>
-                ))}
+                {available.map(p => {
+                  const badge = pluginFindings[p.name];
+                  const isLive = (p.name === 'Sniffer' && snifferActive) ||
+                    (p.name === 'Rogue-AP' && rogueAPActive) ||
+                    (p.name === 'Rogue-RADIUS' && rogueRADIUSActive) ||
+                    (p.name === 'Mesh-Injector' && meshActive) ||
+                    (p.name === 'Baseline-Calibrator' && baselineActive) ||
+                    (p.name === 'Spoofer' && spoofing) ||
+                    (p.name === 'Proxy' && proxyActive);
+                  const isFav = favPlugins.includes(p.name);
+                  return (
+                    <div key={p.name} className="nav-item-row">
+                      <button
+                        className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
+                        style={{ flex: 1, marginBottom: '0.15rem', paddingLeft: '0.6rem', justifyContent: 'space-between' }}
+                        onClick={() => setActivePlugin(p.name)}
+                      >
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <span style={{
+                            width: 5, height: 5, borderRadius: '50%', flexShrink: 0,
+                            background: isLive ? '#22c55e' : activePlugin === p.name ? CAT_COLORS[cat] : 'rgba(255,255,255,0.15)',
+                            boxShadow: isLive ? '0 0 5px #22c55e' : 'none',
+                            animation: isLive ? 'pulse 2s ease-in-out infinite' : 'none',
+                          }} />
+                          {p.name.toUpperCase()}
+                        </span>
+                        {badge > 0 && <span className="nav-badge">{badge}</span>}
+                      </button>
+                      <button className="nav-pin-btn" onClick={() => toggleFav(p.name)} title={isFav ? 'Unpin' : 'Pin'} style={{ opacity: isFav ? 1 : 0 }}>
+                        {isFav ? '★' : '☆'}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
-          {/* Catch any plugin not in categories */}
           {plugins.filter(p => !Object.values(PLUGIN_CATEGORIES).flat().includes(p.name)).map(p => (
             <button key={p.name} className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
               style={{ marginBottom: '0.15rem' }} onClick={() => setActivePlugin(p.name)}>
@@ -1659,6 +1754,7 @@ const Dashboard = () => {
           ))}
         </nav>
 
+        {/* Engine status + theme toggle */}
         <div className="glass-card" style={{ padding: '0.6rem 0.8rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
             <span className={`status-badge ${bcapStatus.running ? 'active' : ''}`} style={{ fontSize: '0.45rem' }}>
@@ -1666,19 +1762,33 @@ const Dashboard = () => {
             </span>
             <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)' }}>{plugins.length} modules</span>
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <span style={{ fontSize: '0.65rem', color: 'var(--neo-cyan)', fontWeight: 700 }}>:8001</span>
-            {bcapStatus.active_modules?.length > 0 && (
-              <div style={{ fontSize: '0.5rem', color: '#f59e0b', marginTop: '0.1rem' }}>{bcapStatus.active_modules.length} active</div>
-            )}
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+            <button
+              onClick={() => setRedOpsMode(m => !m)}
+              title="Toggle Red Ops / Dark mode"
+              style={{
+                background: redOpsMode ? 'rgba(239,68,68,0.15)' : 'transparent',
+                border: `1px solid ${redOpsMode ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.1)'}`,
+                borderRadius: '4px', padding: '0.2rem 0.4rem', cursor: 'pointer',
+                fontSize: '0.6rem', color: redOpsMode ? '#f87171' : 'var(--text-secondary)',
+                fontWeight: 700, letterSpacing: '1px',
+              }}>
+              {redOpsMode ? '◉ RED' : '○ DRK'}
+            </button>
+            <div style={{ textAlign: 'right' }}>
+              <span style={{ fontSize: '0.65rem', color: 'var(--neo-cyan)', fontWeight: 700 }}>:8001</span>
+              {bcapStatus.active_modules?.length > 0 && (
+                <div style={{ fontSize: '0.5rem', color: '#f59e0b', marginTop: '0.1rem' }}>{bcapStatus.active_modules.length} active</div>
+              )}
+            </div>
           </div>
         </div>
       </aside>
 
       <main className="main-content">
-        <header className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem 2rem', alignItems: 'center' }}>
-          <div>
-            <h2 className="accent-text" style={{ fontSize: '1.1rem' }}>{activePlugin || "COMMANDER"}</h2>
+        <header className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1.5rem', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 0 }}>
+            <h2 className="accent-text" style={{ fontSize: '1.1rem', whiteSpace: 'nowrap' }}>{activePlugin || "COMMANDER"}</h2>
             <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Operational Surface Matrix</p>
           </div>
 
@@ -1731,14 +1841,66 @@ const Dashboard = () => {
             />
             <span className="status-badge active" style={{ fontSize: '0.45rem', whiteSpace: 'nowrap' }}>{activeTarget?.ip ? 'LOCKED' : 'NONE'}</span>
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <span className="status-badge active">ADMIN_ACTIVE</span>
-            <p style={{ fontSize: '0.6rem', marginTop: '0.3rem', color: 'var(--neo-cyan)' }}>ROOT_SESSION</p>
+          {/* View controls */}
+          <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+            <button className="btn-primary" style={{ fontSize: '0.55rem', padding: '0.3rem 0.6rem', background: splitPanel ? 'rgba(99,102,241,0.2)' : undefined, borderColor: splitPanel ? '#6366f1' : undefined }}
+              onClick={() => { if (splitPanel) { setSplitPanel(null); } else { const others = plugins.filter(p => p.name !== activePlugin); setSplitPanel(others[0]?.name || null); } }}
+              title="Split pane (show two modules side-by-side)">
+              {splitPanel ? '▣ SPLIT ON' : '▤ SPLIT'}
+            </button>
+            <button className="btn-primary" style={{ fontSize: '0.55rem', padding: '0.3rem 0.6rem', background: logDrawerOpen ? 'rgba(99,102,241,0.2)' : undefined, borderColor: logDrawerOpen ? '#6366f1' : undefined }}
+              onClick={() => setLogDrawerOpen(o => !o)}
+              title="Toggle strike log drawer">
+              {logDrawerOpen ? '▲ LOG' : '▽ LOG'}
+            </button>
+            <span className="status-badge active" style={{ alignSelf: 'center' }}>ADMIN_ACTIVE</span>
           </div>
         </header>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 450px', gap: '1rem', flex: 1, overflow: 'hidden' }}>
-          <div key={activePlugin} style={{ display: 'contents' }}>{renderModuleUI()}</div>
+        {/* ── Target Context Toolbar ── */}
+        {activeTarget && (
+          <div className="target-toolbar">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+              <span style={{ fontSize: '0.5rem', color: 'var(--text-secondary)', letterSpacing: '2px' }}>TARGET</span>
+              <span style={{ color: 'var(--neo-cyan)', fontFamily: 'Fira Code', fontWeight: 800, fontSize: '0.85rem' }}>{activeTarget.ip}</span>
+              {activeTarget.vendor && <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>{activeTarget.vendor}</span>}
+              {activeTarget.mac && activeTarget.mac !== 'manual' && <span style={{ fontSize: '0.55rem', color: '#71717a', fontFamily: 'Fira Code' }}>{activeTarget.mac}</span>}
+              {vulnCards.filter(v => v.ip === activeTarget.ip).length > 0 && (
+                <span style={{ fontSize: '0.5rem', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#f87171', borderRadius: '4px', padding: '0.1rem 0.3rem', fontWeight: 700 }}>
+                  {vulnCards.filter(v => v.ip === activeTarget.ip).length} VULNS
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '0.35rem', flexShrink: 0 }}>
+              <button className="btn-primary" style={{ fontSize: '0.5rem', padding: '0.2rem 0.5rem' }}
+                onClick={() => apiCall('/vuln_scan', 'GET', null)}>VULN SCAN</button>
+              <button className="btn-primary" style={{ fontSize: '0.5rem', padding: '0.2rem 0.5rem' }}
+                onClick={() => apiCall('/osint/enrich_all', 'POST', {})}>OSINT</button>
+              <button className="btn-primary" style={{ fontSize: '0.5rem', padding: '0.2rem 0.5rem' }}
+                onClick={() => apiCall('/wifi/deauth', 'POST', { target: 'FF:FF:FF:FF:FF:FF', ap: activeTarget.ip })}>DEAUTH</button>
+              <button className="btn-primary btn-danger" style={{ fontSize: '0.5rem', padding: '0.2rem 0.5rem' }}
+                onClick={() => apiCall('/wifi/auto_attack', 'POST', { bssid: activeTarget.ip })}>AUTO-ATTACK</button>
+              <button className="btn-ghost btn-primary" style={{ fontSize: '0.5rem', padding: '0.2rem 0.5rem' }}
+                onClick={() => setActiveTarget(null)}>✕ CLEAR</button>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '1rem', flex: 1, overflow: 'hidden', flexDirection: 'column' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: splitPanel ? `1fr 1fr 420px` : `1fr 420px`, gap: '1rem', flex: 1, overflow: 'hidden' }}>
+            <div key={activePlugin} style={{ display: 'contents' }}>{renderModuleUI()}</div>
+            {splitPanel && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0.25rem' }}>
+                  <select value={splitPanel} onChange={e => setSplitPanel(e.target.value)}
+                    style={{ background: 'rgba(0,0,0,0.6)', color: 'var(--neo-cyan)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.6rem', fontWeight: 700, cursor: 'pointer' }}>
+                    {plugins.map(p => <option key={p.name} value={p.name} style={{ background: '#000' }}>{p.name.toUpperCase()}</option>)}
+                  </select>
+                  <button className="btn-primary" style={{ fontSize: '0.5rem', padding: '0.2rem 0.4rem' }} onClick={() => setSplitPanel(null)}>✕</button>
+                </div>
+                <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>{renderModuleUI(splitPanel)}</div>
+              </div>
+            )}
 
           <aside className="glass-card" style={{ display: 'grid', gridTemplateRows: '28px 1fr 2fr 40px', gap: '0.5rem', overflow: 'hidden' }}>
             {/* Row 1: Header */}
@@ -1829,6 +1991,33 @@ const Dashboard = () => {
             {/* Row 4: Action Button — always pinned at bottom */}
             <button className="btn-primary active" style={{ height: '100%', fontSize: '0.7rem', flexShrink: 0 }} onClick={() => apiCall('/cyber_strike/start', 'POST', { role: cyberStrikeRole })}>INVOKE PROTOCOL</button>
           </aside>
+          </div>
+
+          {/* ── Bottom Log Drawer ── */}
+          {logDrawerOpen && (
+            <div className="log-drawer">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0.75rem', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '0.55rem', fontWeight: 900, letterSpacing: '2px', color: '#a78bfa' }}>STRIKE LOG</span>
+                  <span className="status-badge active" style={{ fontSize: '0.4rem' }}>{strikeLog.length} ENTRIES</span>
+                </div>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <button className="btn-primary" style={{ fontSize: '0.5rem', padding: '0.15rem 0.4rem' }} onClick={() => setStrikeLog(["[#] LOG CLEARED"])}>CLEAR</button>
+                  <button className="btn-primary" style={{ fontSize: '0.5rem', padding: '0.15rem 0.4rem' }} onClick={() => setLogDrawerOpen(false)}>✕</button>
+                </div>
+              </div>
+              <div ref={tacticalFeedRef} style={{ flex: 1, overflowY: 'auto', padding: '0.4rem 0.75rem', fontFamily: 'Fira Code, monospace', fontSize: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+                {strikeLog.map((log, i) => (
+                  <div key={i} style={{
+                    color: log.includes('[!]') ? '#f43f5e' : log.includes('[<]') ? '#22c55e' : log.includes('[>]') ? '#06b6d4' : log.includes('[cap]') ? '#a78bfa' : 'var(--text-secondary)',
+                    padding: '0.05rem 0',
+                  }}>
+                    {log}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </main>
 
@@ -1877,6 +2066,74 @@ const Dashboard = () => {
           </div>
         ))}
       </div>
+
+      {/* ── Command Palette (Ctrl+K) ── */}
+      {cmdOpen && (
+        <div className="cmd-overlay" onClick={() => setCmdOpen(false)}>
+          <div className="cmd-palette" onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>⌘</span>
+              <input
+                ref={cmdInputRef}
+                value={cmdQuery}
+                onChange={e => setCmdQuery(e.target.value)}
+                placeholder="Search modules, actions…"
+                style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'white', fontFamily: 'Fira Code, monospace', fontSize: '0.85rem' }}
+                onKeyDown={e => {
+                  if (e.key === 'Escape') setCmdOpen(false);
+                  if (e.key === 'Enter') {
+                    const filtered = [...plugins.map(p => p.name), 'Split', 'Log Drawer', 'Red Ops', 'Clear Log']
+                      .filter(n => n.toLowerCase().includes(cmdQuery.toLowerCase()));
+                    if (filtered[0]) {
+                      if (filtered[0] === 'Split') { setSplitPanel(plugins.find(p => p.name !== activePlugin)?.name); }
+                      else if (filtered[0] === 'Log Drawer') { setLogDrawerOpen(o => !o); }
+                      else if (filtered[0] === 'Red Ops') { setRedOpsMode(m => !m); }
+                      else if (filtered[0] === 'Clear Log') { setStrikeLog(["[#] LOG CLEARED"]); }
+                      else { setActivePlugin(filtered[0]); }
+                      setCmdOpen(false);
+                    }
+                  }
+                }}
+              />
+              <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>ESC to close</span>
+            </div>
+            <div style={{ maxHeight: '360px', overflowY: 'auto', padding: '0.4rem 0' }}>
+              {/* Action shortcuts */}
+              {[{ label: '▣ Toggle Split Pane', action: () => { setSplitPanel(s => s ? null : plugins.find(p => p.name !== activePlugin)?.name); setCmdOpen(false); } },
+                { label: '▽ Toggle Log Drawer', action: () => { setLogDrawerOpen(o => !o); setCmdOpen(false); } },
+                { label: `${redOpsMode ? '○' : '◉'} Toggle Red Ops Mode`, action: () => { setRedOpsMode(m => !m); setCmdOpen(false); } },
+                { label: '⎚ Clear Strike Log', action: () => { setStrikeLog(["[#] LOG CLEARED"]); setCmdOpen(false); } },
+              ].filter(a => !cmdQuery || a.label.toLowerCase().includes(cmdQuery.toLowerCase())).map(a => (
+                <div key={a.label} className="cmd-item cmd-action" onClick={a.action}>
+                  <span style={{ color: '#a78bfa', fontSize: '0.65rem', marginRight: '0.5rem' }}>⚡</span>
+                  {a.label}
+                </div>
+              ))}
+              {/* Module results */}
+              {plugins
+                .filter(p => !cmdQuery || p.name.toLowerCase().includes(cmdQuery.toLowerCase()))
+                .map(p => {
+                  const cat = Object.entries(PLUGIN_CATEGORIES).find(([, names]) => names.includes(p.name))?.[0];
+                  const badge = pluginFindings[p.name];
+                  const isFav = favPlugins.includes(p.name);
+                  return (
+                    <div key={p.name} className={`cmd-item ${activePlugin === p.name ? 'cmd-item-active' : ''}`}
+                      onClick={() => { setActivePlugin(p.name); setCmdOpen(false); }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: CAT_COLORS[cat] || '#6366f1', flexShrink: 0, marginRight: '0.5rem' }} />
+                      <span style={{ flex: 1 }}>{p.name.toUpperCase()}</span>
+                      {badge > 0 && <span className="nav-badge" style={{ marginRight: '0.5rem' }}>{badge}</span>}
+                      <span style={{ fontSize: '0.5rem', color: 'var(--text-secondary)', marginRight: '0.5rem' }}>{cat}</span>
+                      <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: isFav ? '#f59e0b' : '#444', fontSize: '0.7rem', padding: 0 }}
+                        onClick={e => { e.stopPropagation(); toggleFav(p.name); }}>
+                        {isFav ? '★' : '☆'}
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
