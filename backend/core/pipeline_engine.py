@@ -21,7 +21,7 @@ Event flow (default rules):
                        Post-Exploit.generate_persistence()
   WEB_VULN_FOUND     → (persisted automatically by web_scanner)
   OSINT_ENRICHED     → AI-Orchestrator knowledge-graph node update
-  TRAFFIC            → Web-Scanner.analyze_traffic() (passive XSS/error detection)
+  WEB_TRAFFIC        → Web-Scanner.analyze_traffic() (passive XSS/error/reflected input detection)
 """
 
 import asyncio
@@ -83,8 +83,8 @@ class PipelineEngine:
                 await self._on_spoof_active(data)
             elif etype == "ACCESS_GAINED" or etype == "CREDENTIAL_VALID":
                 await self._on_access_gained(data)
-            elif etype == "TRAFFIC":
-                pass  # high-frequency — only process if passive web is enabled
+            elif etype == "WEB_TRAFFIC":
+                await self._on_web_traffic(data)
             elif etype == "OSINT_ENRICHED":
                 await self._on_osint_enriched(data)
         except Exception as exc:
@@ -252,6 +252,18 @@ class PipelineEngine:
             asyncio.create_task(pe.exfiltrate_secrets(f"session_{ip.replace('.','_')}"))
             self._emit("PIPELINE_TRIGGERED", {"rule": "access_gained→post_exploit", "ip": ip})
 
+    async def _on_web_traffic(self, data: dict):
+        if not self.rules.get("traffic→web_passive"):
+            return
+        ws = self._plugin("Web-Scanner")
+        if not ws:
+            return
+        host = data.get("host", "")
+        req  = data.get("request", b"")
+        resp = data.get("response", b"")
+        if host and (req or resp):
+            ws.analyze_traffic(host, req, resp)
+
     async def _on_osint_enriched(self, data: dict):
         ip     = data.get("ip", "")
         osint  = data.get("data", {})
@@ -268,10 +280,13 @@ class PipelineEngine:
         if extra_vulns:
             em = self._plugin("Exploit-Mapper")
             if em:
-                fake_findings = [{"cve": cve, "cvss": 7.0, "severity": "HIGH",
-                                   "ip": ip, "port": None, "service": "shodan",
-                                   "version": None, "state": "open"} for cve in extra_vulns]
-                em.map_cves(fake_findings)
+                shodan_findings = [
+                    {"cve": cve, "cvss": 0.0, "severity": "UNKNOWN",
+                     "ip": ip, "port": None, "service": "shodan",
+                     "version": None, "state": "open"}
+                    for cve in extra_vulns
+                ]
+                em.map_cves(shodan_findings)
                 self._emit("PIPELINE_TRIGGERED", {
                     "rule": "osint_enriched→exploit_map",
                     "ip": ip, "shodan_vulns": extra_vulns

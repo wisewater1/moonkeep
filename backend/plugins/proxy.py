@@ -18,6 +18,7 @@ class ProxyPlugin(BasePlugin):
         self._ca_cert: str | None = None
         self._ca_key:  str | None = None
         self._cert_dir = tempfile.mkdtemp(prefix="moonkeep_certs_")
+        self._pending_req: dict[str, bytes] = {}
         self._setup_ca()
 
     @property
@@ -292,6 +293,19 @@ class ProxyPlugin(BasePlugin):
                 self.emit("CREDENTIAL_FOUND", {"cred": cred, "host": host})
                 if self.target_store:
                     self.target_store.save_credential("Proxy:FormPost", cred)
+
+        # Buffer request so we can emit a paired WEB_TRAFFIC event with the response
+        if direction == "REQUEST":
+            self._pending_req[host] = data
+        elif direction == "RESPONSE":
+            req_bytes = self._pending_req.pop(host, b"")
+            # Emit paired event for passive web scanning (only for HTTP, skip large binary blobs)
+            if len(data) < 1_048_576:  # skip huge responses (images, downloads)
+                self.emit("WEB_TRAFFIC", {
+                    "host": host,
+                    "request": req_bytes,
+                    "response": data,
+                })
 
         self.emit("TRAFFIC", {"host": host, "direction": direction, "bytes": len(data)})
 
