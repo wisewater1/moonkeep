@@ -131,6 +131,25 @@ const Dashboard = () => {
   const [meshDiscovered, setMeshDiscovered] = useState([]);
   const [meshStatus, setMeshStatus] = useState(null);
 
+  // Sniffer
+  const [snifferActive, setSnifferActive] = useState(false);
+  const [snifferIface, setSnifferIface] = useState('eth0');
+  // Post-Exploit
+  const [postExploitOutput, setPostExploitOutput] = useState('');
+  const [postExploitSessions, setPostExploitSessions] = useState([]);
+  const [postExploitOS, setPostExploitOS] = useState('windows');
+  // Fuzzer
+  const [fuzzResults, setFuzzResults] = useState([]);
+  const [fuzzTarget, setFuzzTarget] = useState('');
+  // HID-BLE
+  const [bleDevices, setBleDevices] = useState([]);
+  const [bleScanning, setBleScanning] = useState(false);
+  const [blePayload, setBlePayload] = useState('GUI r\nDELAY 500\nSTRING cmd.exe\nENTER');
+  // Vuln-Scanner
+  const [vulnScanTarget, setVulnScanTarget] = useState('');
+  const [vulnScanPorts, setVulnScanPorts] = useState('1-1024');
+  const [vulnScanning, setVulnScanning] = useState(false);
+
   // Bettercap CLI State
   const [bcapStatus, setBcapStatus] = useState({ installed: false, running: false });
   const [bcapCmd, setBcapCmd] = useState("");
@@ -433,8 +452,8 @@ const Dashboard = () => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))', gap: '1rem' }}>
               {networks.length === 0
                 ? <p style={{ color: 'var(--text-secondary)' }}>No networks found. Run a scan or start wardriving.</p>
-                : networks.map((n, i) => (
-                  <div key={i} className="glass-card" style={{ padding: '1rem', background: 'rgba(255,255,255,0.02)' }}>
+                : networks.map((n) => (
+                  <div key={n.mac} className="glass-card" style={{ padding: '1rem', background: 'rgba(255,255,255,0.02)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', overflow: 'hidden' }}>
                       <p style={{ fontWeight: 900, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', paddingRight: '0.5rem' }} title={n.ssid || 'HIDDEN'}>{n.ssid || 'HIDDEN'}</p>
                       <p style={{ color: 'var(--neo-cyan)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{n.rssi} dBm</p>
@@ -593,59 +612,200 @@ const Dashboard = () => {
       case "Sniffer":
         return (
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <h3>DPI Credential Loot</h3>
-            <div className="glass-card" style={{ border: '1px solid var(--secondary-accent)', background: 'rgba(244, 63, 94, 0.05)' }}>
-              {capturedCreds.map((c, i) => (
-                <div key={i} style={{ fontSize: '0.8rem', margin: '0.3rem 0', fontFamily: 'Fira Code' }}>[FOUND] {c}</div>
-              ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>DPI Credential Harvester</h3>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <span className={`status-badge ${snifferActive ? 'active' : ''}`}>
+                  <span className={snifferActive ? 'pulse' : ''}>{snifferActive ? '● LIVE' : '○ IDLE'}</span>
+                </span>
+                <span className="status-badge">{packets.length} PKT</span>
+                {capturedCreds.length > 0 && <span className="status-badge" style={{ color: '#f87171', borderColor: 'rgba(248,113,113,0.5)' }}>{capturedCreds.length} CREDS</span>}
+              </div>
             </div>
-            <div style={{ flex: 1, overflowY: 'auto', background: 'rgba(0,0,0,0.4)', padding: '1rem', borderRadius: '12px' }}>
-              {packets.map((p, i) => (
-                <div key={i} style={{ fontSize: '0.65rem', margin: '0.2rem 0', color: 'var(--text-secondary)' }}>{p.src} -&gt; {p.dst}</div>
-              ))}
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <input value={snifferIface} onChange={e => setSnifferIface(e.target.value)} placeholder="Interface (eth0, wlan0)"
+                style={{ width: '150px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <button className={`btn-primary ${snifferActive ? 'btn-danger' : ''}`} onClick={async () => {
+                if (snifferActive) {
+                  await apiCall('/sniffer/stop', 'POST', {});
+                  setSnifferActive(false);
+                } else {
+                  const r = await apiCall('/sniffer/start', 'POST', { iface: snifferIface });
+                  if (r) setSnifferActive(true);
+                }
+              }}>{snifferActive ? 'STOP CAPTURE' : 'START CAPTURE'}</button>
+              <button className="btn-primary btn-ghost" onClick={async () => {
+                const r = await apiCall('/sniffer/credentials');
+                if (r?.credentials) setCapturedCreds(r.credentials);
+              }}>REFRESH CREDS</button>
+            </div>
+            {capturedCreds.length > 0 && (
+              <div className="glass-card" style={{ padding: '0.5rem 0.75rem', border: '1px solid rgba(244,63,94,0.35)', background: 'rgba(244,63,94,0.04)', maxHeight: '110px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                {capturedCreds.map((c, i) => (
+                  <div key={i} style={{ fontSize: '0.72rem', fontFamily: 'Fira Code', color: '#fca5a5' }}>✦ {c}</div>
+                ))}
+              </div>
+            )}
+            {capturedCreds.length === 0 && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Set interface → START CAPTURE. DPI will auto-extract credentials from HTTP, FTP, SMTP, IMAP and TELNET streams.</p>
+            )}
+            <div style={{ flex: 1, overflowY: 'auto', background: 'rgba(0,0,0,0.4)', padding: '0.6rem', borderRadius: '8px', fontFamily: 'Fira Code', fontSize: '0.62rem' }}>
+              {packets.length === 0
+                ? <span style={{ color: 'var(--text-secondary)' }}>No packets yet — start capture above.</span>
+                : packets.slice(-150).map((p, i) => (
+                  <div key={i} style={{ margin: '0.12rem 0', color: 'var(--text-secondary)' }}>{p.src} → {p.dst}</div>
+                ))}
             </div>
           </div>
         );
 
       case "Post-Exploit":
         return (
-          <div className="glass-card fade-in" style={{ flex: 1 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2rem' }}>
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3>Post-Exploit C2</h3>
-              <button className="btn-primary" onClick={() => apiCall('/post_exploit/pivot', 'POST', { target_ip: activeTarget?.ip || '192.168.1.1' })}>
-                SCAN PIVOT: {activeTarget?.ip || "AUTO"}
-              </button>
+              <span className="status-badge">{postExploitSessions.length} SESSIONS</span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <button className="btn-primary btn-ghost" onClick={() => apiCall('/post_exploit/persistence', 'GET', { os: 'windows' })}>GENERATE PERSISTENCE</button>
-              <button className="btn-primary btn-ghost" onClick={() => apiCall('/post_exploit/exfiltrate', 'POST', { target_session_id: activeTarget?.ip })}>HARVEST DATA</button>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <select value={postExploitOS} onChange={e => setPostExploitOS(e.target.value)}
+                style={{ fontSize: '0.7rem', background: 'rgba(0,0,0,0.6)', color: 'white', border: '1px solid var(--glass-border)', borderRadius: '4px', padding: '0.4rem 0.6rem' }}>
+                <option value="windows">Windows</option>
+                <option value="linux">Linux</option>
+                <option value="macos">macOS</option>
+              </select>
+              <button className="btn-primary" onClick={async () => {
+                const r = await apiCall('/post_exploit/pivot', 'POST', { target_ip: activeTarget?.ip || '192.168.1.1' });
+                if (r) setPostExploitOutput(JSON.stringify(r, null, 2));
+              }}>SCAN PIVOT: {activeTarget?.ip || 'AUTO'}</button>
+              <button className="btn-primary btn-ghost" onClick={async () => {
+                const r = await apiCall(`/post_exploit/persistence?os=${postExploitOS}`);
+                if (r?.script) setPostExploitOutput(r.script);
+                else if (r?.payload) setPostExploitOutput(r.payload);
+                else if (r) setPostExploitOutput(JSON.stringify(r, null, 2));
+              }}>GEN PERSISTENCE</button>
+              <button className="btn-primary btn-ghost" onClick={async () => {
+                const r = await apiCall('/post_exploit/exfiltrate', 'POST', { target_session_id: activeTarget?.ip });
+                if (r?.files) setPostExploitOutput(r.files.join('\n'));
+                else if (r?.secrets) setPostExploitOutput(r.secrets.join('\n'));
+                else if (r) setPostExploitOutput(JSON.stringify(r, null, 2));
+              }}>HARVEST DATA</button>
+              {postExploitOutput && <button className="btn-primary btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => setPostExploitOutput('')}>CLEAR</button>}
+            </div>
+            {postExploitSessions.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', maxHeight: '90px', overflowY: 'auto' }}>
+                {postExploitSessions.map((s, i) => (
+                  <div key={s.id || i} className="glass-card" style={{ padding: '0.35rem 0.7rem', background: 'rgba(255,255,255,0.02)', fontSize: '0.7rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <span style={{ color: '#22c55e', fontWeight: 700, fontFamily: 'monospace' }}>#{s.id}</span>
+                    <span style={{ color: 'var(--neo-cyan)' }}>{s.target_ip}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{s.os}</span>
+                    <span style={{ color: '#f59e0b', marginLeft: 'auto' }}>{s.privileges}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ flex: 1, background: 'rgba(0,0,0,0.5)', borderRadius: '8px', padding: '0.75rem', fontFamily: 'Fira Code', fontSize: '0.65rem', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', border: `1px solid ${postExploitOutput ? 'rgba(34,197,94,0.25)' : 'var(--glass-border)'}`, color: postExploitOutput ? '#86efac' : 'var(--text-secondary)' }}>
+              {postExploitOutput || 'Select a target then:\n• SCAN PIVOT → enumerate lateral movement paths via SMB/WinRM/SSH\n• GEN PERSISTENCE → deployable payload for selected OS\n• HARVEST DATA → enumerate secrets, .env files, credentials'}
             </div>
           </div>
         );
 
       case "Fuzzer":
         return (
-          <div className="glass-card fade-in" style={{ flex: 1 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2rem' }}>
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3>Protocol Mutation Fuzzer</h3>
-              <span className="status-badge active">{fuzzingStatus}</span>
+              <span className={`status-badge ${fuzzingStatus !== 'IDLE' ? 'active' : ''}`}>
+                <span className={fuzzingStatus !== 'IDLE' ? 'pulse' : ''}>{fuzzingStatus}</span>
+              </span>
             </div>
-            <p style={{ fontSize: '0.8rem', marginBottom: '1rem' }}>Targeting: {activeTarget?.ip || "None Selected"}</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <button className="btn-primary" onClick={() => apiCall(`/fuzzer/snmp?ip=${encodeURIComponent(activeTarget?.ip || '')}`, 'POST')}>FUZZ SNMP</button>
-              <button className="btn-primary" onClick={() => apiCall(`/fuzzer/mdns?ip=${encodeURIComponent(activeTarget?.ip || '224.0.0.251')}`, 'POST')}>FUZZ MDNS</button>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <input value={fuzzTarget} onChange={e => setFuzzTarget(e.target.value)} placeholder={activeTarget?.ip || 'Target IP'}
+                style={{ width: '150px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <button className="btn-primary" onClick={async () => {
+                const ip = fuzzTarget || activeTarget?.ip || '';
+                if (!ip) return;
+                setFuzzingStatus('SNMP…');
+                const r = await apiCall(`/fuzzer/snmp?ip=${encodeURIComponent(ip)}`, 'POST');
+                if (r) setFuzzResults(prev => [{ proto: 'SNMP', ip, ...r, ts: new Date().toLocaleTimeString() }, ...prev]);
+                setFuzzingStatus('IDLE');
+              }}>FUZZ SNMP</button>
+              <button className="btn-primary" onClick={async () => {
+                const ip = fuzzTarget || activeTarget?.ip || '224.0.0.251';
+                setFuzzingStatus('mDNS…');
+                const r = await apiCall(`/fuzzer/mdns?ip=${encodeURIComponent(ip)}`, 'POST');
+                if (r) setFuzzResults(prev => [{ proto: 'mDNS', ip, ...r, ts: new Date().toLocaleTimeString() }, ...prev]);
+                setFuzzingStatus('IDLE');
+              }}>FUZZ mDNS</button>
+              {fuzzResults.length > 0 && <button className="btn-primary btn-ghost" onClick={() => setFuzzResults([])}>CLEAR</button>}
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              {fuzzResults.length === 0
+                ? <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Enter a target IP and select a protocol to begin mutation fuzzing. Results and crash signals appear here.</p>
+                : fuzzResults.map((r, i) => (
+                  <div key={i} className="glass-card" style={{ padding: '0.6rem 0.8rem', background: 'rgba(255,255,255,0.02)', fontSize: '0.72rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                      <span style={{ color: '#f97316', fontWeight: 700 }}>{r.proto}</span>
+                      <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: '0.6rem' }}>{r.ts}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                      <span style={{ color: 'var(--neo-cyan)', fontFamily: 'monospace' }}>{r.ip}</span>
+                      {r.packets_sent != null && <span style={{ color: 'var(--text-secondary)' }}>{r.packets_sent} sent</span>}
+                      {r.responses != null && <span style={{ color: '#22c55e' }}>{r.responses} resp</span>}
+                      {r.crashes > 0 && <span style={{ color: '#ef4444', fontWeight: 700 }}>⚠ {r.crashes} CRASH</span>}
+                      {r.status && <span style={{ color: r.status === 'ok' ? '#22c55e' : '#f59e0b' }}>{r.status}</span>}
+                    </div>
+                  </div>
+                ))}
             </div>
           </div>
         );
 
       case "HID-BLE-Strike":
         return (
-          <div className="glass-card fade-in" style={{ flex: 1 }}>
-            <h3>HID / BLE Tactical Injection</h3>
-            <p style={{ fontSize: '0.8rem', marginBottom: '1.5rem' }}>Active Vector: {activeTarget?.mac || "AA:BB:CC:11:22:33"}</p>
-            <div style={{ display: 'flex', gap: '1rem' }}>
-              <button className="btn-primary" style={{ flex: 1 }} onClick={() => apiCall('/hid_ble/scan')}>BLE RECON</button>
-              <button className="btn-primary" style={{ flex: 1 }} onClick={() => apiCall(`/hid_ble/inject?target_mac=${encodeURIComponent(activeTarget?.mac || 'AA:BB:CC:11:22:33')}`, 'POST')}>MOUSEJACK INJ</button>
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>HID / BLE Tactical Injection</h3>
+              <span className={`status-badge ${bleScanning ? 'active' : ''}`}>
+                <span className={bleScanning ? 'pulse' : ''}>{bleScanning ? '● SCANNING' : `${bleDevices.length} DEVICES`}</span>
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="btn-primary" onClick={async () => {
+                setBleScanning(true);
+                const r = await apiCall('/hid_ble/scan');
+                setBleDevices(Array.isArray(r) ? r : r?.devices || []);
+                setBleScanning(false);
+              }}>BLE RECON</button>
+              {bleDevices.length > 0 && <button className="btn-primary btn-ghost" onClick={() => setBleDevices([])}>CLEAR</button>}
+            </div>
+            {bleDevices.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '170px', overflowY: 'auto' }}>
+                {bleDevices.map((d, i) => (
+                  <div key={d.mac || i} className="glass-card" style={{ padding: '0.5rem 0.8rem', background: 'rgba(255,255,255,0.02)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <span style={{ fontWeight: 700, fontSize: '0.75rem', color: d.type === 'HID' ? '#f97316' : 'white' }}>{d.name || 'Unknown'}</span>
+                      <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', fontFamily: 'monospace', marginLeft: '0.5rem' }}>{d.mac}</span>
+                      <span style={{ fontSize: '0.55rem', background: 'rgba(255,255,255,0.07)', borderRadius: '3px', padding: '0.1rem 0.3rem', marginLeft: '0.4rem' }}>{d.type}</span>
+                    </div>
+                    <button className="btn-primary btn-danger" style={{ fontSize: '0.6rem', padding: '0.2rem 0.5rem' }}
+                      onClick={() => apiCall(`/hid_ble/inject?target_mac=${encodeURIComponent(d.mac)}`, 'POST')}>
+                      INJECT
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {bleDevices.length === 0 && !bleScanning && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Run BLE RECON to enumerate nearby HID/wireless peripherals (requires Bluetooth adapter + root).</p>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: 'auto' }}>
+              <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)', letterSpacing: '1.5px', textTransform: 'uppercase' }}>Ducky Payload</span>
+              <textarea value={blePayload} onChange={e => setBlePayload(e.target.value)} rows={4}
+                style={{ background: 'rgba(0,0,0,0.6)', border: '1px solid var(--glass-border)', color: '#86efac', fontFamily: 'Fira Code', fontSize: '0.7rem', borderRadius: '6px', padding: '0.5rem', resize: 'vertical', lineHeight: 1.5 }} />
+              <button className="btn-primary btn-danger" style={{ alignSelf: 'flex-start' }}
+                onClick={() => apiCall(`/hid_ble/inject?target_mac=${encodeURIComponent(activeTarget?.mac || 'AA:BB:CC:11:22:33')}`, 'POST')}>
+                INJECT → {activeTarget?.mac || 'AA:BB:CC:11:22:33'}
+              </button>
             </div>
           </div>
         );
@@ -668,7 +828,7 @@ const Dashboard = () => {
                 </thead>
                 <tbody>
                   {secretFindings.map((f, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <tr key={`${f.file}-${f.type}-${i}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                       <td style={{ padding: '0.5rem', color: '#f59e0b' }}>{f.type}</td>
                       <td style={{ padding: '0.5rem' }}>{f.file}</td>
                       <td style={{ padding: '0.5rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{f.preview}</td>
@@ -683,22 +843,42 @@ const Dashboard = () => {
 
       case "Vuln-Scanner":
         return (
-          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3>Vulnerability Scanner</h3>
-              <button className="btn-primary" onClick={() => apiCall('/vuln_scan')}>START DEEP ANALYSIS</button>
+              <span className={`status-badge ${vulnScanning ? 'active' : ''}`}>
+                {vulnScanning ? <span className="pulse">● SCANNING</span> : `${vulnCards.length} FINDINGS`}
+              </span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem', overflowY: 'auto' }}>
-              {vulnCards.map((v, i) => (
-                <div key={i} className="glass-card" style={{ padding: '1rem', borderLeft: `3px solid ${v.severity === 'CRITICAL' ? '#f43f5e' : '#f59e0b'}` }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <h4 style={{ margin: 0 }}>{v.cve}</h4>
-                    <span style={{ fontSize: '0.6rem', color: v.severity === 'CRITICAL' ? '#f43f5e' : '#f59e0b', fontWeight: 900 }}>{v.severity}</span>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <input value={vulnScanTarget} onChange={e => setVulnScanTarget(e.target.value)} placeholder={activeTarget?.ip || 'Target IP'}
+                style={{ width: '145px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <input value={vulnScanPorts} onChange={e => setVulnScanPorts(e.target.value)} placeholder="Ports (1-1024)"
+                style={{ width: '120px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <button className={`btn-primary ${vulnScanning ? 'active' : ''}`} disabled={vulnScanning} onClick={async () => {
+                const target = vulnScanTarget || activeTarget?.ip;
+                if (!target) return;
+                setVulnScanning(true);
+                await apiCall(`/vuln_scan?target=${encodeURIComponent(target)}`);
+                await new Promise(r => setTimeout(r, 5000));
+                const res = await apiCall('/vuln_scan/results');
+                if (res?.vulnerabilities) setVulnCards(res.vulnerabilities);
+                setVulnScanning(false);
+              }}>{vulnScanning ? 'SCANNING…' : 'DEEP SCAN'}</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '0.75rem', overflowY: 'auto', flex: 1 }}>
+              {vulnCards.length === 0
+                ? <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Enter a target IP and click DEEP SCAN — port scan, banner grab, SSL audit and CVE matching will run.</p>
+                : vulnCards.map((v, i) => (
+                  <div key={v.cve || v.type || i} className="glass-card" style={{ padding: '1rem', borderLeft: `3px solid ${v.severity === 'CRITICAL' ? '#ef4444' : v.severity === 'HIGH' ? '#f97316' : '#eab308'}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <h4 style={{ margin: 0, fontSize: '0.75rem', color: '#a78bfa' }}>{v.cve || v.type}</h4>
+                      <span style={{ fontSize: '0.6rem', color: v.severity === 'CRITICAL' ? '#ef4444' : v.severity === 'HIGH' ? '#f97316' : '#eab308', fontWeight: 900, flexShrink: 0, marginLeft: '0.5rem' }}>{v.severity}</span>
+                    </div>
+                    <p style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>{v.desc || v.description}</p>
+                    {v.port && <span style={{ fontSize: '0.6rem', color: 'var(--neo-cyan)', fontFamily: 'monospace' }}>port {v.port}</span>}
                   </div>
-                  <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>{v.desc}</p>
-                </div>
-              ))}
-              {vulnCards.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>No vulnerabilities detected.</p>}
+                ))}
             </div>
           </div>
         );
@@ -1548,7 +1728,7 @@ const Dashboard = () => {
         </header>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 450px', gap: '1rem', flex: 1, overflow: 'hidden' }}>
-          {renderModuleUI()}
+          <div key={activePlugin} style={{ display: 'contents' }}>{renderModuleUI()}</div>
 
           <aside className="glass-card" style={{ display: 'grid', gridTemplateRows: '28px 1fr 2fr 40px', gap: '0.5rem', overflow: 'hidden' }}>
             {/* Row 1: Header */}

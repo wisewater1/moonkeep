@@ -283,6 +283,13 @@ async def vulnerability_scan(target: str = None):
     asyncio.create_task(_scan_and_ingest())
     return {"status": "Vulnerability scan launched", "target": target}
 
+@app.get("/vuln_scan/results")
+async def vuln_scan_results():
+    plugin = plugin_manager.get_plugin("Vuln-Scanner")
+    if not plugin: raise HTTPException(status_code=404)
+    vulns = getattr(plugin, 'vulns', [])
+    return {"vulnerabilities": vulns, "count": len(vulns)}
+
 # CYBER STRIKE ENDPOINTS
 class CyberStrikeBody(BaseModel):
     role: str
