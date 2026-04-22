@@ -3,6 +3,7 @@ import cmd
 import codecs
 import inspect
 import json
+import math
 import os
 import random
 import re
@@ -97,6 +98,29 @@ class Options(dict):
 #=================================================
 # FRAMEWORK CLASS
 #=================================================
+
+def _compute_leak_score(num_entries=None, num_domains_affected=None, attack_method=None):
+    score = 5.0
+    if num_entries is not None:
+        try:
+            entries = int(str(num_entries).replace(',', ''))
+            if entries > 0:
+                score += min(math.log10(entries) / 10, 3.0)
+        except (ValueError, TypeError):
+            pass
+    if num_domains_affected is not None:
+        try:
+            domains = int(str(num_domains_affected).replace(',', ''))
+            if domains > 0:
+                score += min(math.log10(domains) / 5, 1.0)
+        except (ValueError, TypeError):
+            pass
+    if attack_method is not None:
+        attack_str = str(attack_method).lower()
+        for method in ("sqli", "phishing", "credential stuffing"):
+            if method in attack_str:
+                score += 0.5
+    return str(round(max(0.0, min(10.0, score)), 2))
 
 class Framework(cmd.Cmd):
     prompt = '>>>'
@@ -536,6 +560,12 @@ class Framework(cmd.Cmd):
 
     def insert_leaks(self, leak_id=None, description=None, source_refs=None, leak_type=None, title=None, import_date=None, leak_date=None, attackers=None, num_entries=None, score=None, num_domains_affected=None, attack_method=None, target_industries=None, password_hash=None, password_type=None, targets=None, media_refs=None, notes=None, mute=False):
         '''Adds a leak to the database and returns the affected row count.'''
+        if score is None:
+            score = _compute_leak_score(
+                num_entries=num_entries,
+                num_domains_affected=num_domains_affected,
+                attack_method=attack_method,
+            )
         data = dict(
             leak_id = leak_id,
             description = description,

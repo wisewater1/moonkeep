@@ -98,6 +98,7 @@ body {
     0 15px 35px rgba(0, 0, 0, 0.7),
     inset 0 1px 0 var(--glass-highlight);
   position: relative;
+  will-change: opacity, transform;
 }
 
 /* ELITE BUTTONS */
@@ -188,19 +189,89 @@ body {
 
 /* UTILS */
 .fade-in {
-  animation: fadeIn 0.4s ease-out forwards;
+  animation: fadeIn 0.18s ease-out forwards;
 }
 
 @keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideIn {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateX(40px);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateX(0);
   }
+}
+
+.slide-in {
+  animation: slideIn 0.3s ease-out forwards;
+}
+
+/* Plugin status colors */
+.severity-critical { color: #ef4444; }
+.severity-high     { color: #f97316; }
+.severity-medium   { color: #eab308; }
+.severity-low      { color: #6b7280; }
+
+/* Danger button variant */
+.btn-danger {
+  background: rgba(239, 68, 68, 0.08) !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+  color: #f87171 !important;
+}
+.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.18) !important;
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.3) !important;
+}
+
+/* Ghost / secondary button */
+.btn-ghost {
+  background: transparent !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: var(--text-secondary) !important;
+}
+.btn-ghost:hover {
+  background: rgba(255,255,255,0.05) !important;
+  color: white !important;
+}
+
+/* Sidebar category label */
+.nav-category {
+  font-size: 0.42rem;
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  padding: 0.7rem 0.5rem 0.2rem;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* Pulsing live indicator */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+.pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* Input focus state */
+input:focus, select:focus {
+  outline: none;
+  border-color: rgba(99, 102, 241, 0.6) !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.12);
+}
+
+/* Table row hover */
+tbody tr:hover {
+  background: rgba(255, 255, 255, 0.025);
 }
 
 ::-webkit-scrollbar {
@@ -210,4 +281,160 @@ body {
 ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 2px;
+}
+
+/* ── Red Ops Theme ────────────────────────────────────────── */
+[data-theme="red"] {
+  --bg-color: #060000;
+  --panel-bg: rgba(10, 0, 0, 0.95);
+  --accent-color: #ef4444;
+  --accent-glow: rgba(239, 68, 68, 0.4);
+  --neo-cyan: #f87171;
+  --neo-cyan-glow: rgba(248, 113, 113, 0.4);
+  --secondary-accent: #fbbf24;
+  --glass-border: rgba(239, 68, 68, 0.12);
+  --glass-highlight: rgba(239, 68, 68, 0.06);
+}
+[data-theme="red"] body {
+  background-image:
+    radial-gradient(at 0% 0%, rgba(239, 68, 68, 0.06) 0px, transparent 40%),
+    radial-gradient(at 100% 100%, rgba(248, 113, 113, 0.04) 0px, transparent 40%);
+}
+[data-theme="red"] .nav-btn.active {
+  background: rgba(239, 68, 68, 0.12) !important;
+  border-color: #ef4444 !important;
+}
+[data-theme="red"] .accent-text {
+  background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+/* ── Nav badge (finding count) ──────────────────────────── */
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 8px;
+  font-size: 0.42rem;
+  font-weight: 900;
+  color: #f87171;
+  padding: 0 3px;
+  flex-shrink: 0;
+}
+
+/* ── Nav item row (pin button) ──────────────────────────── */
+.nav-item-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.nav-item-row:hover .nav-pin-btn {
+  opacity: 1 !important;
+}
+.nav-pin-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #f59e0b;
+  font-size: 0.65rem;
+  padding: 0.15rem 0.3rem;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+/* ── Command palette trigger ────────────────────────────── */
+.cmd-palette-trigger {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+}
+.cmd-palette-trigger:hover span {
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  color: white !important;
+}
+
+/* ── Command palette overlay ────────────────────────────── */
+.cmd-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  z-index: 99999;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+
+.cmd-palette {
+  width: 560px;
+  max-width: 90vw;
+  background: rgba(8, 8, 12, 0.97);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: 12px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(99, 102, 241, 0.1);
+  overflow: hidden;
+  animation: fadeIn 0.12s ease-out;
+}
+
+.cmd-item {
+  display: flex;
+  align-items: center;
+  padding: 0.55rem 1rem;
+  font-size: 0.72rem;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.cmd-item:hover, .cmd-item-active {
+  background: rgba(99, 102, 241, 0.1);
+  color: white;
+}
+.cmd-action {
+  color: #a78bfa;
+  font-size: 0.65rem;
+}
+
+/* ── Target Context Toolbar ─────────────────────────────── */
+.target-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  background: rgba(6, 182, 212, 0.04);
+  border: 1px solid rgba(6, 182, 212, 0.18);
+  border-radius: 8px;
+  padding: 0.4rem 0.9rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* ── Bottom Log Drawer ──────────────────────────────────── */
+.log-drawer {
+  height: 190px;
+  flex-shrink: 0;
+  background: rgba(4, 4, 8, 0.97);
+  border: 1px solid rgba(167, 139, 250, 0.2);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideUp 0.2s ease-out;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

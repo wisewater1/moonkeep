@@ -65,6 +65,9 @@ class GoogleAPIMixin(object):
             resp = self.request('GET', url, params=payload)
             if resp.json() == None:
                 raise framework.FrameworkException(f"Invalid JSON response.{os.linesep}{resp.text}")
+            if 'error' in resp.json():
+                error = resp.json()['error']
+                raise framework.FrameworkException(f"({error['code']}) {error['message']}")
             # add new results
             if 'items' in resp.json():
                 results.extend(resp.json()['items'])
@@ -75,7 +78,6 @@ class GoogleAPIMixin(object):
             # check for more pages
             if not 'queries' in resp.json() or not 'nextPage' in resp.json()['queries']:
                 break
-            #TODO we should probably handle quota exceeded here
             payload['start'] = resp.json()['queries']['nextPage'][0]['startIndex']
         return results
 

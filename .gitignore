@@ -6,8 +6,10 @@ __pycache__/
 
 backend/logs/
 *.sqlite3
+*.db
 .env
 .vscode/
 .idea/
 frontend/node_modules/
 backend/venv/
+*.mjs

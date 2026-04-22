@@ -42,8 +42,36 @@ class FuzzerPlugin(BasePlugin):
 
     async def fuzz_mdns(self, target_ip="224.0.0.251"):
         """
-        Broadcast malformed MDNS queries to stress local service discovery.
+        Broadcast malformed mDNS queries to stress local service discovery.
+        Sends mutations: oversized names, null bytes, max-label boundaries,
+        and service-discovery probes to the mDNS multicast group.
         """
-        print("Fuzzer: Flooding MDNS with malformed discovery frames...")
-        # Packet construction logic...
-        return {"status": "MDNS Fuzzing Active"}
+        print(f"Fuzzer: Flooding mDNS multicast with malformed discovery frames -> {target_ip}")
+        from scapy.all import DNS, DNSQR
+
+        mutations = [
+            "A" * 200 + ".local",
+            "\x00\xff.local",
+            "x" * 63 + "." + "y" * 63 + ".local",
+            "_services._dns-sd._udp.local",
+            "\xff\xfe.local",
+            "." * 10 + "local",
+        ]
+
+        def _run():
+            for i in range(60):
+                if not self.running:
+                    break
+                name = mutations[i % len(mutations)]
+                try:
+                    pkt = (IP(dst="224.0.0.251") /
+                           UDP(sport=5353, dport=5353) /
+                           DNS(id=i & 0xFFFF, qr=0, qdcount=1,
+                               qd=DNSQR(qname=name, qtype="PTR")))
+                    send(pkt, verbose=False)
+                except Exception:
+                    pass
+                time.sleep(0.05)
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"status": "MDNS Fuzzing Active", "target": target_ip, "mutations": len(mutations)}

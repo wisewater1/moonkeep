@@ -2,6 +2,7 @@ import sqlite3
 import os
 import time
 import json
+from collections import Counter
 from typing import List, Dict, Any, Optional
 
 class CampaignManager:
@@ -123,6 +124,22 @@ class CampaignManager:
         conn.commit()
         conn.close()
 
+    def save_finding(self, campaign_id: str, type: str, target: str, data: str):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("INSERT INTO findings (campaign_id, type, target, data, timestamp) VALUES (?, ?, ?, ?, ?)",
+                  (campaign_id, type, target, data, time.time()))
+        conn.commit()
+        conn.close()
+
+    def load_findings(self, campaign_id: str) -> List[Dict]:
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("SELECT type, target, data, timestamp FROM findings WHERE campaign_id=? ORDER BY timestamp DESC", (campaign_id,))
+        rows = c.fetchall()
+        conn.close()
+        return [{"type": r[0], "target": r[1], "data": r[2], "ts": r[3]} for r in rows]
+
     def load_credentials(self, campaign_id: str) -> List[Dict]:
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
@@ -139,18 +156,51 @@ class CampaignManager:
         md += f"**Scope:** {campaign['scope']}\n**Description:** {campaign['description']}\n\n"
         
         devices = self.load_devices(campaign_id)
-        md += f"### Discovered Devices ({len(devices)})\n"
-        for d in devices:
-            md += f"- `{d['ip']}` | {d['mac']} | {d['vendor']}\n"
-            
+        md += f"### Discovered Devices ({len(devices)})\n\n"
+        if devices:
+            md += "| IP Address | MAC Address | Vendor | Hostname |\n"
+            md += "|------------|-------------|--------|----------|\n"
+            for d in devices:
+                ip       = d.get('ip')       or ''
+                mac      = d.get('mac')      or ''
+                vendor   = d.get('vendor')   or ''
+                hostname = d.get('hostname') or ''
+                md += f"| `{ip}` | {mac} | {vendor} | {hostname} |\n"
+            md += "\n"
+        else:
+            md += "_No devices discovered._\n\n"
+
         networks = self.load_networks(campaign_id)
-        md += f"\n### Discovered Wireless Networks ({len(networks)})\n"
+        md += f"### Discovered Wireless Networks ({len(networks)})\n"
         for n in networks:
             md += f"- `{n['ssid']}` ({n['bssid']}) - Ch {n['channel']} [{n['encryption']}]\n"
-            
+
         creds = self.load_credentials(campaign_id)
-        md += f"\n### Captured Loot ({len(creds)})\n"
-        for c in creds:
-            md += f"- **{c['plugin']}**: `{c['content']}`\n"
-            
+        md += f"\n### Captured Credentials ({len(creds)} total)\n\n"
+        if creds:
+            freq = Counter((c['plugin'], c['content']) for c in creds)
+            top_creds = freq.most_common(10)
+            md += "| Plugin | Credential | Occurrences |\n"
+            md += "|--------|-----------|-------------|\n"
+            for (plugin, content), count in top_creds:
+                display = content if len(content) <= 60 else content[:57] + "..."
+                md += f"| {plugin} | `{display}` | {count} |\n"
+            md += "\n"
+        else:
+            md += "_No credentials captured._\n\n"
+
+        findings = self.load_findings(campaign_id)
+        md += f"### Findings ({len(findings)} total)\n\n"
+        if findings:
+            md += "| Type | Target | Detail |\n"
+            md += "|------|--------|--------|\n"
+            for f in findings[:50]:
+                detail = f['data'] if len(f['data']) <= 80 else f['data'][:77] + "..."
+                md += f"| {f['type']} | `{f['target']}` | {detail} |\n"
+            if len(findings) > 50:
+                md += f"\n_...and {len(findings) - 50} more findings._\n"
+            md += "\n"
+        else:
+            md += "_No findings recorded._\n\n"
+
         return md

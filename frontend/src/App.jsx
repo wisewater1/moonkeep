@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import 'xterm/css/xterm.css';
@@ -24,7 +24,7 @@ const ReconTerminal = () => {
     // Slight delay to ensure DOM is ready before fitting
     setTimeout(() => fitAddon.fit(), 50);
 
-    const ws = new WebSocket('ws://localhost:8001/ws/recon');
+    const ws = new WebSocket((import.meta.env.VITE_WS_URL || 'ws://localhost:8001') + '/ws/recon');
     wsRef.current = ws;
 
     ws.onmessage = async (e) => {
@@ -94,6 +94,62 @@ const Dashboard = () => {
   const [proxyActive, setProxyActive] = useState(false);
   const [fuzzingStatus, setFuzzingStatus] = useState("IDLE");
 
+  // WiFi Routing States
+  const [rogueAPActive, setRogueAPActive] = useState(false);
+  const [rogueAPMode, setRogueAPMode] = useState("portal");
+  const [rogueAPSSID, setRogueAPSSID] = useState("Free_WiFi");
+  const [rogueAPCreds, setRogueAPCreds] = useState([]);
+  const [rogueRADIUSActive, setRogueRADIUSActive] = useState(false);
+  const [rogueRADIUSSSID, setRogueRADIUSSSID] = useState("CorpNet");
+  const [rogueRADIUSHashes, setRogueRADIUSHashes] = useState([]);
+  const [autoAttacking, setAutoAttacking] = useState(new Set());
+
+  // Plugin-specific States
+  const [credSprayResults, setCredSprayResults] = useState([]);
+  const [credSprayTarget, setCredSprayTarget] = useState('');
+  const [credSprayCred, setCredSprayCred] = useState('');
+  const [exploitMappings, setExploitMappings] = useState([]);
+  const [webScanFindings, setWebScanFindings] = useState([]);
+  const [webScanTarget, setWebScanTarget] = useState('');
+  const [hashInput, setHashInput] = useState('');
+  const [hashResults, setHashResults] = useState([]);
+  const [osintIP, setOsintIP] = useState('');
+  const [osintData, setOsintData] = useState(null);
+  const [reportHTML, setReportHTML] = useState('');
+
+  // Novel Concept Plugin States
+  const [fpProfiles, setFpProfiles] = useState([]);
+  const [fpTargetBssid, setFpTargetBssid] = useState('');
+  const [identities, setIdentities] = useState([]);
+  const [genomePolicy, setGenomePolicy] = useState(null);
+  const [genomeCreds, setGenomeCreds] = useState([]);
+  const [baselineActive, setBaselineActive] = useState(false);
+  const [baselineData, setBaselineData] = useState(null);
+  const [baselineSecs, setBaselineSecs] = useState(60);
+  const [meshActive, setMeshActive] = useState(false);
+  const [meshId, setMeshId] = useState('');
+  const [meshDiscovered, setMeshDiscovered] = useState([]);
+  const [meshStatus, setMeshStatus] = useState(null);
+
+  // Sniffer
+  const [snifferActive, setSnifferActive] = useState(false);
+  const [snifferIface, setSnifferIface] = useState('eth0');
+  // Post-Exploit
+  const [postExploitOutput, setPostExploitOutput] = useState('');
+  const [postExploitSessions, setPostExploitSessions] = useState([]);
+  const [postExploitOS, setPostExploitOS] = useState('windows');
+  // Fuzzer
+  const [fuzzResults, setFuzzResults] = useState([]);
+  const [fuzzTarget, setFuzzTarget] = useState('');
+  // HID-BLE
+  const [bleDevices, setBleDevices] = useState([]);
+  const [bleScanning, setBleScanning] = useState(false);
+  const [blePayload, setBlePayload] = useState('GUI r\nDELAY 500\nSTRING cmd.exe\nENTER');
+  // Vuln-Scanner
+  const [vulnScanTarget, setVulnScanTarget] = useState('');
+  const [vulnScanPorts, setVulnScanPorts] = useState('1-1024');
+  const [vulnScanning, setVulnScanning] = useState(false);
+
   // Bettercap CLI State
   const [bcapStatus, setBcapStatus] = useState({ installed: false, running: false });
   const [bcapCmd, setBcapCmd] = useState("");
@@ -105,7 +161,32 @@ const Dashboard = () => {
   const [cliOutput, setCliOutput] = useState([{ text: '═══ NATIVE CAP ENGINE ═══', color: '#a78bfa' }, { text: 'Type "help" for available commands.', color: '#666' }]);
   const [suggestion, setSuggestion] = useState("");
   const cliRef = useRef(null);
+  const tacticalFeedRef = useRef(null);
   const inputRef = useRef(null);
+  const cmdInputRef = useRef(null);
+
+  // ── Productivity Features ──────────────────────────────────────
+  const [cmdOpen, setCmdOpen]           = useState(false);
+  const [cmdQuery, setCmdQuery]         = useState('');
+  const [splitPanel, setSplitPanel]     = useState(null);
+  const [logDrawerOpen, setLogDrawerOpen] = useState(false);
+  const [redOpsMode, setRedOpsMode]     = useState(() => localStorage.getItem('moonkeep_red_ops') === '1');
+  const [favPlugins, setFavPlugins]     = useState(() => { try { return JSON.parse(localStorage.getItem('moonkeep_favs') || '[]'); } catch { return []; } });
+  const [pluginFindings, setPluginFindings] = useState({});
+
+  const PLUGIN_CATEGORIES = {
+    RECON:     ['Scanner', 'Wardriver', 'OSINT-Enricher', 'Recon-Console'],
+    WIFI:      ['WiFi-Strike', 'Rogue-AP', 'Rogue-RADIUS', 'WiFi-Fingerprinter', 'Mesh-Injector'],
+    INTERCEPT: ['Sniffer', 'Proxy', 'Spoofer'],
+    EXPLOIT:   ['Post-Exploit', 'Fuzzer', 'HID-BLE-Strike', 'Cyber-Strike'],
+    INTEL:     ['AI-Orchestrator', 'Secret-Hunter', 'Vuln-Scanner', 'Exploit-Mapper', 'Web-Scanner', 'Identity-Correlator'],
+    CREDS:     ['Cred-Spray', 'Hash-Cracker', 'Cred-Genome', 'Baseline-Calibrator'],
+    REPORT:    ['Report-Builder'],
+  };
+  const CAT_COLORS = {
+    RECON: '#06b6d4', WIFI: '#f97316', INTERCEPT: '#a78bfa',
+    EXPLOIT: '#ef4444', INTEL: '#22c55e', CREDS: '#f59e0b', REPORT: '#94a3b8',
+  };
 
   const CLI_COMMANDS = [
     'net.probe on', 'net.probe off', 'net.recon on', 'net.recon off', 'net.show',
@@ -130,23 +211,59 @@ const Dashboard = () => {
 
   const ws = useRef(null);
 
+  // ── Red-ops theme ──────────────────────────────────────────────
+  useEffect(() => {
+    document.documentElement.dataset.theme = redOpsMode ? 'red' : 'dark';
+    localStorage.setItem('moonkeep_red_ops', redOpsMode ? '1' : '0');
+  }, [redOpsMode]);
+
+  // ── Session persistence ────────────────────────────────────────
+  useEffect(() => {
+    try { const t = localStorage.getItem('moonkeep_target'); if (t) setActiveTarget(JSON.parse(t)); } catch {}
+    try { const p = localStorage.getItem('moonkeep_plugin'); if (p) setActivePlugin(p); } catch {}
+    try { const v = localStorage.getItem('moonkeep_vulns');  if (v) setVulnCards(JSON.parse(v)); } catch {}
+    try { const c = localStorage.getItem('moonkeep_creds');  if (c) setCapturedCreds(JSON.parse(c)); } catch {}
+  }, []);
+  useEffect(() => { try { localStorage.setItem('moonkeep_target', JSON.stringify(activeTarget)); } catch {} }, [activeTarget]);
+  useEffect(() => { try { localStorage.setItem('moonkeep_plugin', activePlugin); } catch {} }, [activePlugin]);
+  useEffect(() => { try { localStorage.setItem('moonkeep_vulns', JSON.stringify(vulnCards.slice(-100))); } catch {} }, [vulnCards]);
+  useEffect(() => { try { localStorage.setItem('moonkeep_creds', JSON.stringify(capturedCreds.slice(-100))); } catch {} }, [capturedCreds]);
+  useEffect(() => { try { localStorage.setItem('moonkeep_favs', JSON.stringify(favPlugins)); } catch {} }, [favPlugins]);
+
+  // ── Ctrl+K command palette ─────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); setCmdOpen(o => !o); setCmdQuery(''); }
+      if (e.key === 'Escape') { setCmdOpen(false); setSplitPanel(null); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => { if (cmdOpen) setTimeout(() => cmdInputRef.current?.focus(), 30); }, [cmdOpen]);
+
+  const toggleFav = useCallback((name) => {
+    setFavPlugins(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
+  }, []);
+
   useEffect(() => {
     // Force path sync
     if (window.location.pathname !== "/") window.history.replaceState({}, "", "/");
 
     const boot = async () => {
       try {
-        const res = await fetch('http://localhost:8001/plugins');
+        const res = await fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/plugins');
         const data = await res.json();
         setPlugins([...data, { name: 'Recon-Console' }]);
-        if (data.length > 0) setActivePlugin(data[0].name);
+        const savedPlugin = localStorage.getItem('moonkeep_plugin');
+        if (!savedPlugin && data.length > 0) setActivePlugin(data[0].name);
 
-        const campRes = await fetch('http://localhost:8001/campaigns');
+        const campRes = await fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/campaigns');
         const campData = await campRes.json();
         setCampaigns(campData);
 
         // Hydrate targets from backend store
-        fetch('http://localhost:8001/scan').then(r => r.json()).then(d => {
+        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/scan').then(r => r.json()).then(d => {
           if (d.devices && d.devices.length > 0) {
             setDevices(d.devices);
             setActiveTarget(d.devices[0]);
@@ -158,20 +275,47 @@ const Dashboard = () => {
     };
     boot();
 
-    ws.current = new WebSocket('ws://localhost:8001/ws');
+    ws.current = new WebSocket((import.meta.env.VITE_WS_URL || 'ws://localhost:8001') + '/ws');
     ws.current.onmessage = (e) => {
-      const data = JSON.parse(e.data);
-      if (data.plugin && data.ts) {
-        const msg = data.data?.msg || (typeof data.data === 'string' ? data.data : JSON.stringify(data.data));
-        setStrikeLog(prev => [...prev.slice(-40), `[${data.plugin}] ${msg}`]);
-        const newToast = { id: Date.now() + Math.random(), ...data };
-        setToasts(prev => [...prev.slice(-4), newToast]);
-        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== newToast.id)), 5000);
-      } else if (data.type === "EVENT") {
-        setStrikeLog(prev => [...prev.slice(-40), data.data.msg]);
-      } else {
-        setPackets(prev => [data, ...prev].slice(0, 30));
-      }
+      try {
+        const data = JSON.parse(e.data);
+        if (data.plugin && data.ts) {
+          const msg = data.data?.msg || (typeof data.data === 'string' ? data.data : JSON.stringify(data.data));
+          setStrikeLog(prev => [...prev.slice(-40), `[${data.plugin}] ${msg}`]);
+
+          // Route events to the correct module state
+          if (data.plugin === 'Cyber-Strike') {
+            setCyberStrikeLog(prev => [...prev.slice(-100), `[${data.type}] ${msg}`]);
+          }
+          if (data.type === 'CREDENTIAL_FOUND' || data.type === 'HARVEST') {
+            setCapturedCreds(prev => [...prev.slice(-200), msg]);
+            setPluginFindings(prev => ({ ...prev, Sniffer: (prev.Sniffer || 0) + 1, 'Cred-Spray': (prev['Cred-Spray'] || 0) + 1 }));
+          }
+          if (data.type === 'SECRET_FOUND' && data.data?.type) {
+            setSecretFindings(prev => [...prev, data.data]);
+            setPluginFindings(prev => ({ ...prev, 'Secret-Hunter': (prev['Secret-Hunter'] || 0) + 1 }));
+          }
+          if (data.type === 'PACKET' && data.data) {
+            setPackets(prev => [data.data, ...prev].slice(0, 150));
+          }
+          if (data.type === 'VULN_RESULT' && data.data?.findings) {
+            setVulnCards(prev => {
+              const existing = new Set(prev.map(v => `${v.ip}-${v.cve}-${v.port}`));
+              const fresh = data.data.findings.filter(v => !existing.has(`${v.ip}-${v.cve}-${v.port}`));
+              return [...prev, ...fresh];
+            });
+            setPluginFindings(prev => ({ ...prev, 'Vuln-Scanner': (prev['Vuln-Scanner'] || 0) + (data.data.findings?.length || 0) }));
+          }
+
+          const newToast = { id: Date.now() + Math.random(), ...data };
+          setToasts(prev => [...prev.slice(-4), newToast]);
+          setTimeout(() => setToasts(prev => prev.filter(t => t.id !== newToast.id)), 5000);
+        } else if (data.type === "EVENT") {
+          setStrikeLog(prev => [...prev.slice(-40), data.data?.msg || '']);
+        } else {
+          setPackets(prev => [data, ...prev].slice(0, 30));
+        }
+      } catch { /* malformed frame — ignore */ }
     };
 
     return () => ws.current?.close();
@@ -181,22 +325,47 @@ const Dashboard = () => {
     if (!activePlugin) return;
     const poll = setInterval(() => {
       if (activePlugin === "AI-Orchestrator") {
-        fetch('http://localhost:8001/graph').then(r => r.json()).then(setGraphData).catch(() => { });
+        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/graph').then(r => r.json()).then(setGraphData).catch(() => { });
       }
       if (activePlugin === "Sniffer") {
-        fetch('http://localhost:8001/sniffer/credentials').then(r => r.json()).then(d => setCapturedCreds(d.credentials || [])).catch(() => { });
+        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/sniffer/credentials').then(r => r.json()).then(d => setCapturedCreds(d.credentials || [])).catch(() => { });
+      }
+      if (activePlugin === "Cred-Spray") {
+        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/cred_spray/results').then(r => r.json()).then(d => setCredSprayResults(d.results || [])).catch(() => { });
+      }
+      if ((activePlugin === "WiFi-Strike" || activePlugin === "Wardriver") && rogueAPActive) {
+        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/rogue_ap/creds').then(r => r.json()).then(d => setRogueAPCreds(d.creds || [])).catch(() => { });
+      }
+      if ((activePlugin === "WiFi-Strike" || activePlugin === "Wardriver") && rogueRADIUSActive) {
+        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/rogue_radius/hashes').then(r => r.json()).then(d => setRogueRADIUSHashes(d.hashes || [])).catch(() => { });
+      }
+      if (activePlugin === "WiFi-Fingerprinter") {
+        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/wifi_fingerprint/profiles').then(r => r.json()).then(d => setFpProfiles(d.profiles || [])).catch(() => { });
+      }
+      if (activePlugin === "Baseline-Calibrator" && baselineActive) {
+        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/baseline/status').then(r => r.json()).then(d => { if (d.baseline && d.baseline.arp_per_min !== undefined) setBaselineData(d.baseline); }).catch(() => { });
+      }
+      if (activePlugin === "Mesh-Injector" && meshActive) {
+        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/mesh/status').then(r => r.json()).then(d => setMeshStatus(d)).catch(() => { });
       }
     }, 4000);
     return () => clearInterval(poll);
-  }, [activePlugin]);
+  }, [activePlugin, rogueAPActive, rogueRADIUSActive]);
+
+  // Auto-scroll tactical feed on new entries
+  useEffect(() => {
+    if (tacticalFeedRef.current) {
+      tacticalFeedRef.current.scrollTop = tacticalFeedRef.current.scrollHeight;
+    }
+  }, [strikeLog]);
 
   // Bettercap status polling
   useEffect(() => {
     const pollBcap = setInterval(() => {
-      fetch('http://localhost:8001/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
+      fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
     }, 5000);
     // Initial check
-    fetch('http://localhost:8001/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
+    fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
     return () => clearInterval(pollBcap);
   }, []);
 
@@ -211,7 +380,7 @@ const Dashboard = () => {
     setCliOutput(prev => [...prev, { text: `❯ ${cmd}`, color: '#a78bfa', bold: true }]);
     setStrikeLog(prev => [...prev.slice(-40), `[cap] > ${cmd}`]);
     try {
-      const res = await fetch('http://localhost:8001/bettercap/command', {
+      const res = await fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/bettercap/command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cmd })
@@ -252,7 +421,7 @@ const Dashboard = () => {
         options.headers = { 'Content-Type': 'application/json' };
         options.body = JSON.stringify(body);
       }
-      const res = await fetch(`http://localhost:8001${endpoint}`, options);
+      const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:8001"}${endpoint}`, options);
       const data = await res.json();
       setStrikeLog(prev => [...prev.slice(-40), `[<] SUCCESS: ${endpoint}`, `[#] DATA: ${JSON.stringify(data).slice(0, 100)}...`]);
       return data;
@@ -264,7 +433,7 @@ const Dashboard = () => {
 
   const handleExportReport = async () => {
     try {
-      const res = await fetch(`http://localhost:8001/campaigns/${activeCampaign}/report`);
+      const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:8001"}/campaigns/${activeCampaign}/report`);
       const data = await res.json();
       if (data.report) {
         const blob = new Blob([data.report], { type: 'text/markdown' });
@@ -279,10 +448,10 @@ const Dashboard = () => {
     } catch (err) { }
   };
 
-  const renderModuleUI = () => {
-    if (!activePlugin) return <div className="glass-card">INITIALIZING VECTORS...</div>;
+  const renderModuleUI = (plugin = activePlugin) => {
+    if (!plugin) return <div className="glass-card">INITIALIZING VECTORS...</div>;
 
-    switch (activePlugin) {
+    switch (plugin) {
       case "Scanner":
         return (
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -319,11 +488,12 @@ const Dashboard = () => {
       case "WiFi-Strike":
       case "Wardriver":
         return (
-          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto' }}>
+            {/* ── Header ── */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3>Wireless Strike Arsenal</h3>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button className="btn-primary" onClick={async () => {
+                <button className="btn-primary" onClick={() => {
                   apiCall('/bettercap/command', 'POST', { cmd: 'wifi.recon on' });
                   setStrikeLog(prev => [...prev.slice(-40), "[#] AUTO-WARDRIVER STARTED"]);
                 }}>START WARDRIVER</button>
@@ -333,43 +503,140 @@ const Dashboard = () => {
                 }}>REFRESH BANDS</button>
               </div>
             </div>
-            <div style={{ flex: 1, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem', paddingRight: '0.5rem' }}>
-              {networks.length === 0 ? <p style={{ color: 'var(--text-secondary)' }}>No networks found. Run a scan or start wardriving.</p> :
-                networks.map((n, i) => (
-                  <div key={i} className="glass-card" style={{ padding: '1rem', background: 'rgba(255,255,255,0.02)' }}>
+
+            {/* ── Network Cards ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))', gap: '1rem' }}>
+              {networks.length === 0
+                ? <p style={{ color: 'var(--text-secondary)' }}>No networks found. Run a scan or start wardriving.</p>
+                : networks.map((n) => (
+                  <div key={n.mac} className="glass-card" style={{ padding: '1rem', background: 'rgba(255,255,255,0.02)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', overflow: 'hidden' }}>
                       <p style={{ fontWeight: 900, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', paddingRight: '0.5rem' }} title={n.ssid || 'HIDDEN'}>{n.ssid || 'HIDDEN'}</p>
                       <p style={{ color: 'var(--neo-cyan)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{n.rssi} dBm</p>
                     </div>
                     <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
-                      MAC: {n.mac} <br />
-                      CH: {n.channel} | ENC: {n.encryption}
+                      MAC: {n.mac}<br />CH: {n.channel} | ENC: {n.encryption}
                     </div>
-                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-                      <button className="btn-primary" style={{ flex: 1, fontSize: '0.6rem' }} onClick={() => apiCall('/wifi/deauth', 'POST', { target: 'FF:FF:FF:FF:FF:FF', ap: n.mac })}>DEAUTH</button>
-                      <button className="btn-primary" style={{ flex: 1, fontSize: '0.6rem' }} onClick={() => apiCall('/wifi/capture', 'POST', { bssid: n.mac })}>LISTEN (EAPOL)</button>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem', marginTop: '0.9rem' }}>
+                      <button className="btn-primary" style={{ fontSize: '0.55rem', padding: '0.35rem' }}
+                        onClick={() => apiCall('/wifi/deauth', 'POST', { target: 'FF:FF:FF:FF:FF:FF', ap: n.mac })}>
+                        DEAUTH
+                      </button>
+                      <button className="btn-primary" style={{ fontSize: '0.55rem', padding: '0.35rem' }}
+                        onClick={() => apiCall(`/wifi/capture?bssid=${encodeURIComponent(n.mac)}`, 'POST')}>
+                        LISTEN (EAPOL)
+                      </button>
+                      <button className="btn-primary" style={{ fontSize: '0.55rem', padding: '0.35rem', gridColumn: 'span 2', background: autoAttacking.has(n.mac) ? 'rgba(239,68,68,0.25)' : undefined, borderColor: autoAttacking.has(n.mac) ? '#ef4444' : undefined }}
+                        disabled={autoAttacking.has(n.mac)}
+                        onClick={async () => {
+                          setAutoAttacking(prev => new Set([...prev, n.mac]));
+                          await apiCall('/wifi/auto_attack', 'POST', { bssid: n.mac });
+                          setAutoAttacking(prev => { const s = new Set(prev); s.delete(n.mac); return s; });
+                        }}>
+                        {autoAttacking.has(n.mac) ? 'AUTO-ATTACKING…' : 'AUTO-ATTACK (DEAUTH+CRACK)'}
+                      </button>
+                      <button className="btn-primary" style={{ fontSize: '0.55rem', padding: '0.35rem' }}
+                        onClick={() => {
+                          setRogueAPSSID(n.ssid || 'Free_WiFi');
+                          apiCall('/rogue_ap/start', 'POST', { ssid: n.ssid || 'Free_WiFi', channel: n.channel || 6, mode: rogueAPMode })
+                            .then(r => { if (r) setRogueAPActive(true); });
+                        }}>
+                        EVIL TWIN
+                      </button>
+                      <button className="btn-primary" style={{ fontSize: '0.55rem', padding: '0.35rem' }}
+                        onClick={() => {
+                          setRogueRADIUSSSID(n.ssid || 'CorpNet');
+                          apiCall('/rogue_radius/start', 'POST', { ssid: n.ssid || 'CorpNet', channel: n.channel || 6 })
+                            .then(r => { if (r) setRogueRADIUSActive(true); });
+                        }}>
+                        ENT TRAP
+                      </button>
                     </div>
                   </div>
                 ))}
             </div>
-          </div>
-        );
 
-      case "AI-Orchestrator":
-        return (
-          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-              <h3>Neural Reasoning Graph</h3>
-              <span className="status-badge active">BRAIN ONLINE</span>
+            {/* ── Rogue AP Panel (Options A + B) ── */}
+            <div className="glass-card" style={{ padding: '1rem', border: '1px solid rgba(239,68,68,0.35)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#f87171' }}>
+                  EVIL TWIN AP&nbsp;&nbsp;<span className={rogueAPActive ? 'pulse' : ''} style={{ color: rogueAPActive ? '#4ade80' : '#6b7280' }}>{rogueAPActive ? '● LIVE' : '○ IDLE'}</span>
+                </span>
+                <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <select value={rogueAPMode} onChange={e => setRogueAPMode(e.target.value)}
+                    style={{ fontSize: '0.65rem', background: 'rgba(0,0,0,0.6)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '4px', padding: '0.25rem 0.4rem' }}>
+                    <option value="portal">Portal — harvest creds</option>
+                    <option value="bridge">Bridge — silent MITM</option>
+                  </select>
+                  <input value={rogueAPSSID} onChange={e => setRogueAPSSID(e.target.value)} placeholder="SSID"
+                    style={{ width: '90px', fontSize: '0.65rem', background: 'rgba(0,0,0,0.6)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '4px', padding: '0.25rem 0.4rem' }} />
+                  <button className={`btn-primary ${rogueAPActive ? 'btn-danger' : ''}`} style={{ fontSize: '0.6rem' }} onClick={async () => {
+                    if (rogueAPActive) {
+                      await apiCall('/rogue_ap/stop', 'POST', {});
+                      setRogueAPActive(false);
+                    } else {
+                      const r = await apiCall('/rogue_ap/start', 'POST', { ssid: rogueAPSSID, mode: rogueAPMode });
+                      if (r) setRogueAPActive(true);
+                    }
+                  }}>{rogueAPActive ? 'STOP AP' : 'LAUNCH AP'}</button>
+                  {rogueAPActive && (
+                    <button className="btn-primary" style={{ fontSize: '0.6rem' }} onClick={async () => {
+                      const r = await apiCall('/rogue_ap/creds');
+                      if (r) setRogueAPCreds(r.creds || []);
+                    }}>REFRESH CREDS ({rogueAPCreds.length})</button>
+                  )}
+                </div>
+              </div>
+              {rogueAPCreds.length > 0 && (
+                <div style={{ marginTop: '0.75rem', maxHeight: '130px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                  {rogueAPCreds.map((c, i) => (
+                    <div key={i} style={{ fontSize: '0.65rem', padding: '0.25rem 0.4rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px' }}>
+                      <span style={{ color: 'var(--neo-cyan)' }}>{c.src_ip}</span>
+                      <span style={{ color: 'var(--text-secondary)', margin: '0 0.4rem' }}>→</span>
+                      <span style={{ color: '#f87171' }}>{c.user}</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>:{c.password}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <div style={{ flex: 1, background: 'rgba(0,0,0,0.5)', borderRadius: '12px', border: '1px solid var(--glass-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width="100%" height="200">
-                {graphData.nodes.map((n, i) => <circle key={i} cx={50 + i * 70} cy="100" r="10" fill="var(--neo-cyan)" stroke="white" strokeWidth="1" />)}
-              </svg>
-            </div>
-            <div className="glass-card" style={{ marginTop: '1rem', border: '1px solid rgba(6, 182, 212, 0.3)' }}>
-              <p style={{ color: 'var(--neo-cyan)', fontSize: '0.75rem', fontWeight: 900 }}>LOGIC CHAIN</p>
-              <p style={{ fontSize: '0.8rem', marginTop: '0.5rem', color: 'var(--text-secondary)' }}>Identifying vulnerable exposure points across discoverable sub-nets.</p>
+
+            {/* ── Rogue RADIUS Panel (Option D) ── */}
+            <div className="glass-card" style={{ padding: '1rem', border: '1px solid rgba(168,85,247,0.35)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#a855f7' }}>
+                  WPA-ENTERPRISE TRAP&nbsp;&nbsp;<span className={rogueRADIUSActive ? 'pulse' : ''} style={{ color: rogueRADIUSActive ? '#4ade80' : '#6b7280' }}>{rogueRADIUSActive ? '● LIVE' : '○ IDLE'}</span>
+                </span>
+                <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input value={rogueRADIUSSSID} onChange={e => setRogueRADIUSSSID(e.target.value)} placeholder="Corp SSID"
+                    style={{ width: '100px', fontSize: '0.65rem', background: 'rgba(0,0,0,0.6)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '4px', padding: '0.25rem 0.4rem' }} />
+                  <button className={`btn-primary ${rogueRADIUSActive ? 'btn-danger' : ''}`} style={{ fontSize: '0.6rem' }} onClick={async () => {
+                    if (rogueRADIUSActive) {
+                      await apiCall('/rogue_radius/stop', 'POST', {});
+                      setRogueRADIUSActive(false);
+                    } else {
+                      const r = await apiCall('/rogue_radius/start', 'POST', { ssid: rogueRADIUSSSID });
+                      if (r) setRogueRADIUSActive(true);
+                    }
+                  }}>{rogueRADIUSActive ? 'STOP RADIUS' : 'LAUNCH RADIUS'}</button>
+                  {rogueRADIUSActive && (
+                    <button className="btn-primary" style={{ fontSize: '0.6rem' }} onClick={async () => {
+                      const r = await apiCall('/rogue_radius/hashes');
+                      if (r) setRogueRADIUSHashes(r.hashes || []);
+                    }}>REFRESH HASHES ({rogueRADIUSHashes.length})</button>
+                  )}
+                </div>
+              </div>
+              {rogueRADIUSHashes.length > 0 && (
+                <div style={{ marginTop: '0.75rem', maxHeight: '130px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                  {rogueRADIUSHashes.map((h, i) => (
+                    <div key={i} style={{ fontSize: '0.6rem', padding: '0.25rem 0.4rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px' }}>
+                      <span style={{ color: '#a855f7', fontWeight: 700 }}>{h.identity}</span>
+                      <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', wordBreak: 'break-all', fontFamily: 'monospace' }}>{h.hashcat}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         );
@@ -384,7 +651,7 @@ const Dashboard = () => {
                 <p style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>Active Target: {devices[0]?.ip || "DISCOVERY REQUIRED"}</p>
               </div>
               <button
-                className={`btn-primary ${spoofing ? 'active' : ''}`}
+                className={`btn-primary ${spoofing ? 'btn-danger' : ''}`}
                 style={{ height: '100px', fontSize: '1rem' }}
                 onClick={async () => {
                   const action = spoofing ? '/spoofer/stop' : '/spoofer/start';
@@ -401,59 +668,203 @@ const Dashboard = () => {
       case "Sniffer":
         return (
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <h3>DPI Credential Loot</h3>
-            <div className="glass-card" style={{ border: '1px solid var(--secondary-accent)', background: 'rgba(244, 63, 94, 0.05)' }}>
-              {capturedCreds.map((c, i) => (
-                <div key={i} style={{ fontSize: '0.8rem', margin: '0.3rem 0', fontFamily: 'Fira Code' }}>[FOUND] {c}</div>
-              ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>DPI Credential Harvester</h3>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <span className={`status-badge ${snifferActive ? 'active' : ''}`}>
+                  <span className={snifferActive ? 'pulse' : ''}>{snifferActive ? '● LIVE' : '○ IDLE'}</span>
+                </span>
+                <span className="status-badge">{packets.length} PKT</span>
+                {capturedCreds.length > 0 && <span className="status-badge" style={{ color: '#f87171', borderColor: 'rgba(248,113,113,0.5)' }}>{capturedCreds.length} CREDS</span>}
+              </div>
             </div>
-            <div style={{ flex: 1, overflowY: 'auto', background: 'rgba(0,0,0,0.4)', padding: '1rem', borderRadius: '12px' }}>
-              {packets.map((p, i) => (
-                <div key={i} style={{ fontSize: '0.65rem', margin: '0.2rem 0', color: 'var(--text-secondary)' }}>{p.src} -&gt; {p.dst}</div>
-              ))}
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <input value={snifferIface} onChange={e => setSnifferIface(e.target.value)} placeholder="Interface (eth0, wlan0)"
+                style={{ width: '150px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <button className={`btn-primary ${snifferActive ? 'btn-danger' : ''}`} onClick={async () => {
+                if (snifferActive) {
+                  await apiCall('/sniffer/stop', 'POST', {});
+                  setSnifferActive(false);
+                } else {
+                  const r = await apiCall('/sniffer/start', 'POST', { iface: snifferIface });
+                  if (r) setSnifferActive(true);
+                }
+              }}>{snifferActive ? 'STOP CAPTURE' : 'START CAPTURE'}</button>
+              <button className="btn-primary btn-ghost" onClick={async () => {
+                const r = await apiCall('/sniffer/credentials');
+                if (r?.credentials) setCapturedCreds(r.credentials);
+              }}>REFRESH CREDS</button>
+            </div>
+            {capturedCreds.length > 0 && (
+              <div className="glass-card" style={{ padding: '0.5rem 0.75rem', border: '1px solid rgba(244,63,94,0.35)', background: 'rgba(244,63,94,0.04)', maxHeight: '110px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                {capturedCreds.map((c, i) => (
+                  <div key={i} style={{ fontSize: '0.72rem', fontFamily: 'Fira Code', color: '#fca5a5' }}>✦ {c}</div>
+                ))}
+              </div>
+            )}
+            {capturedCreds.length === 0 && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Set interface → START CAPTURE. DPI will auto-extract credentials from HTTP, FTP, SMTP, IMAP and TELNET streams.</p>
+            )}
+            <div style={{ flex: 1, overflowY: 'auto', background: 'rgba(0,0,0,0.4)', padding: '0.6rem', borderRadius: '8px', fontFamily: 'Fira Code', fontSize: '0.62rem' }}>
+              {packets.length === 0
+                ? <span style={{ color: 'var(--text-secondary)' }}>No packets yet — start capture above.</span>
+                : packets.slice(-150).map((p, i) => (
+                  <div key={i} style={{ margin: '0.12rem 0', color: 'var(--text-secondary)' }}>{p.src} → {p.dst}</div>
+                ))}
             </div>
           </div>
         );
 
       case "Post-Exploit":
         return (
-          <div className="glass-card fade-in" style={{ flex: 1 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2rem' }}>
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3>Post-Exploit C2</h3>
-              <button className="btn-primary" onClick={() => apiCall('/post_exploit/pivot', 'POST', { target_ip: activeTarget?.ip || '192.168.1.1' })}>
-                SCAN PIVOT: {activeTarget?.ip || "AUTO"}
-              </button>
+              <span className="status-badge">{postExploitSessions.length} SESSIONS</span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <button className="btn-primary ghost" onClick={() => apiCall('/post_exploit/persistence', 'GET', { os: 'windows' })}>GENERATE PERSISTENCE</button>
-              <button className="btn-primary ghost" onClick={() => apiCall('/post_exploit/exfiltrate', 'POST', { target_session_id: activeTarget?.ip })}>HARVEST DATA</button>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <select value={postExploitOS} onChange={e => setPostExploitOS(e.target.value)}
+                style={{ fontSize: '0.7rem', background: 'rgba(0,0,0,0.6)', color: 'white', border: '1px solid var(--glass-border)', borderRadius: '4px', padding: '0.4rem 0.6rem' }}>
+                <option value="windows">Windows</option>
+                <option value="linux">Linux</option>
+                <option value="macos">macOS</option>
+              </select>
+              <button className="btn-primary" onClick={async () => {
+                const r = await apiCall('/post_exploit/pivot', 'POST', { target_ip: activeTarget?.ip || '192.168.1.1' });
+                if (r) setPostExploitOutput(JSON.stringify(r, null, 2));
+              }}>SCAN PIVOT: {activeTarget?.ip || 'AUTO'}</button>
+              <button className="btn-primary btn-ghost" onClick={async () => {
+                const r = await apiCall(`/post_exploit/persistence?os=${postExploitOS}`);
+                if (r?.methods) {
+                  const fmt = Object.entries(r.methods).map(([name, cmd]) => `## ${name}\n${cmd}`).join('\n\n');
+                  setPostExploitOutput(`# ${(r.os || postExploitOS).toUpperCase()} Persistence Payloads\n\n${fmt}`);
+                } else if (r?.script) setPostExploitOutput(r.script);
+                else if (r?.payload) setPostExploitOutput(r.payload);
+                else if (r) setPostExploitOutput(JSON.stringify(r, null, 2));
+              }}>GEN PERSISTENCE</button>
+              <button className="btn-primary btn-ghost" onClick={async () => {
+                const r = await apiCall('/post_exploit/exfiltrate', 'POST', { target_session_id: activeTarget?.ip });
+                if (r?.files) setPostExploitOutput(r.files.join('\n'));
+                else if (r?.secrets) setPostExploitOutput(r.secrets.join('\n'));
+                else if (r) setPostExploitOutput(JSON.stringify(r, null, 2));
+              }}>HARVEST DATA</button>
+              {postExploitOutput && <button className="btn-primary btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => setPostExploitOutput('')}>CLEAR</button>}
+            </div>
+            {postExploitSessions.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', maxHeight: '90px', overflowY: 'auto' }}>
+                {postExploitSessions.map((s, i) => (
+                  <div key={s.id || i} className="glass-card" style={{ padding: '0.35rem 0.7rem', background: 'rgba(255,255,255,0.02)', fontSize: '0.7rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <span style={{ color: '#22c55e', fontWeight: 700, fontFamily: 'monospace' }}>#{s.id}</span>
+                    <span style={{ color: 'var(--neo-cyan)' }}>{s.target_ip}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{s.os}</span>
+                    <span style={{ color: '#f59e0b', marginLeft: 'auto' }}>{s.privileges}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ flex: 1, background: 'rgba(0,0,0,0.5)', borderRadius: '8px', padding: '0.75rem', fontFamily: 'Fira Code', fontSize: '0.65rem', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', border: `1px solid ${postExploitOutput ? 'rgba(34,197,94,0.25)' : 'var(--glass-border)'}`, color: postExploitOutput ? '#86efac' : 'var(--text-secondary)' }}>
+              {postExploitOutput || 'Select a target then:\n• SCAN PIVOT → enumerate lateral movement paths via SMB/WinRM/SSH\n• GEN PERSISTENCE → deployable payload for selected OS\n• HARVEST DATA → enumerate secrets, .env files, credentials'}
             </div>
           </div>
         );
 
       case "Fuzzer":
         return (
-          <div className="glass-card fade-in" style={{ flex: 1 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2rem' }}>
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3>Protocol Mutation Fuzzer</h3>
-              <span className="status-badge active">{fuzzingStatus}</span>
+              <span className={`status-badge ${fuzzingStatus !== 'IDLE' ? 'active' : ''}`}>
+                <span className={fuzzingStatus !== 'IDLE' ? 'pulse' : ''}>{fuzzingStatus}</span>
+              </span>
             </div>
-            <p style={{ fontSize: '0.8rem', marginBottom: '1rem' }}>Targeting: {activeTarget?.ip || "None Selected"}</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <button className="btn-primary" onClick={() => apiCall('/fuzzer/snmp', 'POST', { ip: activeTarget?.ip })}>FUZZ SNMP</button>
-              <button className="btn-primary" onClick={() => apiCall('/fuzzer/mdns', 'POST', { ip: activeTarget?.ip })}>FUZZ MDNS</button>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <input value={fuzzTarget} onChange={e => setFuzzTarget(e.target.value)} placeholder={activeTarget?.ip || 'Target IP'}
+                style={{ width: '150px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <button className="btn-primary" onClick={async () => {
+                const ip = fuzzTarget || activeTarget?.ip || '';
+                if (!ip) return;
+                setFuzzingStatus('SNMP…');
+                const r = await apiCall(`/fuzzer/snmp?ip=${encodeURIComponent(ip)}`, 'POST');
+                if (r) setFuzzResults(prev => [{ proto: 'SNMP', ip, ...r, ts: new Date().toLocaleTimeString() }, ...prev]);
+                setFuzzingStatus('IDLE');
+              }}>FUZZ SNMP</button>
+              <button className="btn-primary" onClick={async () => {
+                const ip = fuzzTarget || activeTarget?.ip || '224.0.0.251';
+                setFuzzingStatus('mDNS…');
+                const r = await apiCall(`/fuzzer/mdns?ip=${encodeURIComponent(ip)}`, 'POST');
+                if (r) setFuzzResults(prev => [{ proto: 'mDNS', ip, ...r, ts: new Date().toLocaleTimeString() }, ...prev]);
+                setFuzzingStatus('IDLE');
+              }}>FUZZ mDNS</button>
+              {fuzzResults.length > 0 && <button className="btn-primary btn-ghost" onClick={() => setFuzzResults([])}>CLEAR</button>}
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              {fuzzResults.length === 0
+                ? <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Enter a target IP and select a protocol to begin mutation fuzzing. Results and crash signals appear here.</p>
+                : fuzzResults.map((r, i) => (
+                  <div key={i} className="glass-card" style={{ padding: '0.6rem 0.8rem', background: 'rgba(255,255,255,0.02)', fontSize: '0.72rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                      <span style={{ color: '#f97316', fontWeight: 700 }}>{r.proto}</span>
+                      <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: '0.6rem' }}>{r.ts}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                      <span style={{ color: 'var(--neo-cyan)', fontFamily: 'monospace' }}>{r.ip}</span>
+                      {r.packets_sent != null && <span style={{ color: 'var(--text-secondary)' }}>{r.packets_sent} sent</span>}
+                      {r.responses != null && <span style={{ color: '#22c55e' }}>{r.responses} resp</span>}
+                      {r.crashes > 0 && <span style={{ color: '#ef4444', fontWeight: 700 }}>⚠ {r.crashes} CRASH</span>}
+                      {r.status && <span style={{ color: r.status === 'ok' ? '#22c55e' : '#f59e0b' }}>{r.status}</span>}
+                    </div>
+                  </div>
+                ))}
             </div>
           </div>
         );
 
       case "HID-BLE-Strike":
         return (
-          <div className="glass-card fade-in" style={{ flex: 1 }}>
-            <h3>HID / BLE Tactical Injection</h3>
-            <p style={{ fontSize: '0.8rem', marginBottom: '1.5rem' }}>Active Vector: {activeTarget?.mac || "AA:BB:CC:11:22:33"}</p>
-            <div style={{ display: 'flex', gap: '1rem' }}>
-              <button className="btn-primary" style={{ flex: 1 }} onClick={() => apiCall('/hid_ble/scan')}>BLE RECON</button>
-              <button className="btn-primary" style={{ flex: 1 }} onClick={() => apiCall('/hid_ble/inject', 'POST', { target_mac: activeTarget?.mac || 'AA:BB:CC:11:22:33' })}>MOUSEJACK INJ</button>
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>HID / BLE Tactical Injection</h3>
+              <span className={`status-badge ${bleScanning ? 'active' : ''}`}>
+                <span className={bleScanning ? 'pulse' : ''}>{bleScanning ? '● SCANNING' : `${bleDevices.length} DEVICES`}</span>
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="btn-primary" onClick={async () => {
+                setBleScanning(true);
+                const r = await apiCall('/hid_ble/scan');
+                setBleDevices(Array.isArray(r) ? r : r?.devices || []);
+                setBleScanning(false);
+              }}>BLE RECON</button>
+              {bleDevices.length > 0 && <button className="btn-primary btn-ghost" onClick={() => setBleDevices([])}>CLEAR</button>}
+            </div>
+            {bleDevices.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '170px', overflowY: 'auto' }}>
+                {bleDevices.map((d, i) => (
+                  <div key={d.mac || i} className="glass-card" style={{ padding: '0.5rem 0.8rem', background: 'rgba(255,255,255,0.02)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <span style={{ fontWeight: 700, fontSize: '0.75rem', color: d.type === 'HID' ? '#f97316' : 'white' }}>{d.name || 'Unknown'}</span>
+                      <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', fontFamily: 'monospace', marginLeft: '0.5rem' }}>{d.mac}</span>
+                      <span style={{ fontSize: '0.55rem', background: 'rgba(255,255,255,0.07)', borderRadius: '3px', padding: '0.1rem 0.3rem', marginLeft: '0.4rem' }}>{d.type}</span>
+                    </div>
+                    <button className="btn-primary btn-danger" style={{ fontSize: '0.6rem', padding: '0.2rem 0.5rem' }}
+                      onClick={() => apiCall(`/hid_ble/inject?target_mac=${encodeURIComponent(d.mac)}`, 'POST')}>
+                      INJECT
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {bleDevices.length === 0 && !bleScanning && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Run BLE RECON to enumerate nearby HID/wireless peripherals (requires Bluetooth adapter + root).</p>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: 'auto' }}>
+              <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)', letterSpacing: '1.5px', textTransform: 'uppercase' }}>Ducky Payload</span>
+              <textarea value={blePayload} onChange={e => setBlePayload(e.target.value)} rows={4}
+                style={{ background: 'rgba(0,0,0,0.6)', border: '1px solid var(--glass-border)', color: '#86efac', fontFamily: 'Fira Code', fontSize: '0.7rem', borderRadius: '6px', padding: '0.5rem', resize: 'vertical', lineHeight: 1.5 }} />
+              <button className="btn-primary btn-danger" style={{ alignSelf: 'flex-start' }}
+                onClick={() => apiCall(`/hid_ble/inject?target_mac=${encodeURIComponent(activeTarget?.mac || 'AA:BB:CC:11:22:33')}`, 'POST')}>
+                INJECT → {activeTarget?.mac || 'AA:BB:CC:11:22:33'}
+              </button>
             </div>
           </div>
         );
@@ -476,7 +887,7 @@ const Dashboard = () => {
                 </thead>
                 <tbody>
                   {secretFindings.map((f, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <tr key={`${f.file}-${f.type}-${i}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                       <td style={{ padding: '0.5rem', color: '#f59e0b' }}>{f.type}</td>
                       <td style={{ padding: '0.5rem' }}>{f.file}</td>
                       <td style={{ padding: '0.5rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{f.preview}</td>
@@ -491,22 +902,42 @@ const Dashboard = () => {
 
       case "Vuln-Scanner":
         return (
-          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3>Vulnerability Scanner</h3>
-              <button className="btn-primary" onClick={() => apiCall('/vuln_scan')}>START DEEP ANALYSIS</button>
+              <span className={`status-badge ${vulnScanning ? 'active' : ''}`}>
+                {vulnScanning ? <span className="pulse">● SCANNING</span> : `${vulnCards.length} FINDINGS`}
+              </span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem', overflowY: 'auto' }}>
-              {vulnCards.map((v, i) => (
-                <div key={i} className="glass-card" style={{ padding: '1rem', borderLeft: `3px solid ${v.severity === 'CRITICAL' ? '#f43f5e' : '#f59e0b'}` }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <h4 style={{ margin: 0 }}>{v.cve}</h4>
-                    <span style={{ fontSize: '0.6rem', color: v.severity === 'CRITICAL' ? '#f43f5e' : '#f59e0b', fontWeight: 900 }}>{v.severity}</span>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <input value={vulnScanTarget} onChange={e => setVulnScanTarget(e.target.value)} placeholder={activeTarget?.ip || 'Target IP'}
+                style={{ width: '145px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <input value={vulnScanPorts} onChange={e => setVulnScanPorts(e.target.value)} placeholder="Ports (1-1024)"
+                style={{ width: '120px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <button className={`btn-primary ${vulnScanning ? 'active' : ''}`} disabled={vulnScanning} onClick={async () => {
+                const target = vulnScanTarget || activeTarget?.ip;
+                if (!target) return;
+                setVulnScanning(true);
+                await apiCall(`/vuln_scan?target=${encodeURIComponent(target)}`);
+                await new Promise(r => setTimeout(r, 5000));
+                const res = await apiCall('/vuln_scan/results');
+                if (res?.vulnerabilities) setVulnCards(res.vulnerabilities);
+                setVulnScanning(false);
+              }}>{vulnScanning ? 'SCANNING…' : 'DEEP SCAN'}</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '0.75rem', overflowY: 'auto', flex: 1 }}>
+              {vulnCards.length === 0
+                ? <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Enter a target IP and click DEEP SCAN — port scan, banner grab, SSL audit and CVE matching will run.</p>
+                : vulnCards.map((v, i) => (
+                  <div key={v.cve || v.type || i} className="glass-card" style={{ padding: '1rem', borderLeft: `3px solid ${v.severity === 'CRITICAL' ? '#ef4444' : v.severity === 'HIGH' ? '#f97316' : '#eab308'}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <h4 style={{ margin: 0, fontSize: '0.75rem', color: '#a78bfa' }}>{v.cve || v.type}</h4>
+                      <span style={{ fontSize: '0.6rem', color: v.severity === 'CRITICAL' ? '#ef4444' : v.severity === 'HIGH' ? '#f97316' : '#eab308', fontWeight: 900, flexShrink: 0, marginLeft: '0.5rem' }}>{v.severity}</span>
+                    </div>
+                    <p style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>{v.desc || v.description}</p>
+                    {v.port && <span style={{ fontSize: '0.6rem', color: 'var(--neo-cyan)', fontFamily: 'monospace' }}>port {v.port}</span>}
                   </div>
-                  <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>{v.desc}</p>
-                </div>
-              ))}
-              {vulnCards.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>No vulnerabilities detected.</p>}
+                ))}
             </div>
           </div>
         );
@@ -514,19 +945,33 @@ const Dashboard = () => {
       case "Cyber-Strike":
         return (
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <h3>Autonomous Cyber-Strike</h3>
-            <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-              <select value={cyberStrikeRole} onChange={e => setCyberStrikeRole(e.target.value)} style={{ background: 'rgba(0,0,0,0.5)', color: 'var(--neo-cyan)', padding: '0.5rem', border: '1px solid var(--glass-border)', borderRadius: '4px' }}>
-                <option value="Shadow">Shadow (Stealth Recon)</option>
-                <option value="Infiltrator">Infiltrator (MITM Proxies)</option>
-                <option value="Ghost">Ghost (Wireless Wardriving)</option>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3>Autonomous Cyber-Strike</h3>
+              <span className="status-badge active" style={{ fontSize: '0.6rem' }}>{cyberStrikeLog.length > 0 ? 'RUNNING' : 'STANDBY'}</span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <select value={cyberStrikeRole} onChange={e => setCyberStrikeRole(e.target.value)}
+                style={{ background: 'rgba(0,0,0,0.5)', color: 'var(--neo-cyan)', padding: '0.5rem 0.75rem', border: '1px solid var(--glass-border)', borderRadius: '4px', flex: 1 }}>
+                <option value="Shadow">Shadow — Stealth Recon</option>
+                <option value="Phantom">Phantom — Silent Infiltration</option>
+                <option value="Ghost">Ghost — WiFi Wardriving</option>
+                <option value="Specter">Specter — Complete MITM</option>
+                <option value="Predator">Predator — WiFi-to-Access</option>
+                <option value="Reaper">Reaper — Intel + Exploit</option>
               </select>
-              <button className="btn-primary" onClick={() => apiCall('/cyber_strike/start', 'POST', { role: cyberStrikeRole })}>ENGAGE {cyberStrikeRole.toUpperCase()}</button>
-              <button className="btn-primary ghost" onClick={() => apiCall('/cyber_strike/stop', 'POST')}>ABORT</button>
+              <button className="btn-primary" onClick={async () => {
+                setCyberStrikeLog([]);
+                await apiCall('/cyber_strike/start', 'POST', { role: cyberStrikeRole });
+              }}>ENGAGE {cyberStrikeRole.toUpperCase()}</button>
+              <button className="btn-primary btn-danger" onClick={() => apiCall('/cyber_strike/stop', 'POST')}>ABORT</button>
             </div>
             <div style={{ flex: 1, background: '#000', padding: '1rem', marginTop: '1rem', borderRadius: '6px', overflowY: 'auto', border: '1px solid var(--glass-border)', fontFamily: 'monospace', fontSize: '0.75rem' }}>
-              {cyberStrikeLog.map((log, i) => <div key={i} style={{ color: '#22c55e', margin: '0.2rem 0' }}>{log}</div>)}
-              {cyberStrikeLog.length === 0 && <div style={{ color: 'var(--text-secondary)' }}>Awaiting protocol engagement...</div>}
+              {cyberStrikeLog.map((log, i) => (
+                <div key={i} style={{ color: log.includes('ERROR') || log.includes('FAIL') ? '#f87171' : log.includes('SUCCESS') || log.includes('FOUND') ? '#4ade80' : '#22c55e', margin: '0.15rem 0' }}>
+                  {log}
+                </div>
+              ))}
+              {cyberStrikeLog.length === 0 && <div style={{ color: 'var(--text-secondary)' }}>Select a role and engage to begin automated attack sequence.</div>}
             </div>
           </div>
         );
@@ -534,15 +979,21 @@ const Dashboard = () => {
       case "AI-Orchestrator":
         return (
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem', alignItems: 'center' }}>
               <h3>AI Copilot War Room</h3>
-              <button className="btn-primary flex items-center gap-2" onClick={() => apiCall('/ai/analyze', 'POST')}>
-                ANALYZE SECRETS & VULNS
-              </button>
+              <button className="btn-primary" onClick={async () => {
+                const r = await apiCall('/ai/analyze', 'GET');
+                if (r?.insights) setAiInsights(r.insights);
+              }}>ANALYZE TARGETS</button>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-              <input type="text" value={aiCmd} onChange={e => setAiCmd(e.target.value)} placeholder="e.g. Pivot through the 192 LAN seeking open databases..." style={{ flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', padding: '0.5rem', color: 'var(--neo-cyan)', fontFamily: 'Fira Code', fontSize: '0.8rem', outline: 'none' }} />
-              <button className="btn-primary" onClick={() => apiCall('/ai/command', 'POST', { instruction: aiCmd })}>PLAN ATTACK</button>
+              <input type="text" value={aiCmd} onChange={e => setAiCmd(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') e.target.nextSibling.click(); }}
+                placeholder="e.g. Pivot through 192.168 LAN seeking open databases..." style={{ flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', padding: '0.5rem', color: 'var(--neo-cyan)', fontFamily: 'Fira Code', fontSize: '0.8rem', outline: 'none' }} />
+              <button className="btn-primary" onClick={async () => {
+                const r = await apiCall('/ai/command', 'POST', { instruction: aiCmd });
+                if (r?.plan) setAiPlan(r.plan);
+              }}>PLAN ATTACK</button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', flex: 1, overflow: 'hidden' }}>
               <div style={{ background: 'rgba(167,139,250,0.05)', borderRadius: '6px', border: '1px solid rgba(167,139,250,0.2)', padding: '1rem', overflowY: 'auto' }}>
@@ -575,7 +1026,7 @@ const Dashboard = () => {
             <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem', alignItems: 'center' }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>PORT</span>
               <input type="number" value={proxyPort} onChange={e => setProxyPort(Number(e.target.value))} style={{ width: '80px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'var(--neo-cyan)', padding: '0.4rem' }} />
-              <button className={`btn-primary ${proxyActive ? 'ghost' : ''}`} onClick={() => {
+              <button className={`btn-primary ${proxyActive ? 'btn-danger' : ''}`} onClick={() => {
                 apiCall(proxyActive ? '/proxy/stop' : '/proxy/start', 'POST', proxyActive ? null : { port: proxyPort });
                 setProxyActive(!proxyActive);
               }}>{proxyActive ? 'STOP PROXY' : 'START PROXY'}</button>
@@ -587,13 +1038,625 @@ const Dashboard = () => {
       case "Recon-Console":
         return <ReconTerminal />;
 
+      case "Cred-Spray":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Credential Spray</h3>
+              <span className={`status-badge ${credSprayResults.filter(r => r.success).length > 0 ? 'active' : ''}`}>
+                {credSprayResults.filter(r => r.success).length} HITS / {credSprayResults.length} TOTAL
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <input value={credSprayTarget} onChange={e => setCredSprayTarget(e.target.value)} placeholder="Target IP"
+                style={{ flex: 1, minWidth: '120px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <input value={credSprayCred} onChange={e => setCredSprayCred(e.target.value)} placeholder="user:pass"
+                style={{ flex: 1, minWidth: '120px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                const r = await apiCall('/cred_spray/run', 'POST', { target_ip: credSprayTarget || activeTarget?.ip, credential: credSprayCred || undefined });
+                if (r) setCredSprayResults(r.results || credSprayResults);
+              }}>SPRAY</button>
+              <button className="btn-primary" style={{ fontSize: '0.7rem', opacity: 0.7 }} onClick={async () => {
+                const r = await apiCall('/cred_spray/results');
+                if (r) setCredSprayResults(r.results || []);
+              }}>REFRESH</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <table style={{ width: '100%', fontSize: '0.72rem', borderCollapse: 'collapse' }}>
+                <thead><tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--glass-border)' }}>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>TARGET</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>PORT</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>PROTOCOL</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>CREDENTIAL</th>
+                </tr></thead>
+                <tbody>
+                  {credSprayResults.filter(r => r.success).map((r, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                      <td style={{ padding: '0.4rem', color: 'var(--neo-cyan)' }}>{r.ip}</td>
+                      <td style={{ padding: '0.4rem' }}>{r.port}</td>
+                      <td style={{ padding: '0.4rem', color: '#f59e0b' }}>{r.protocol}</td>
+                      <td style={{ padding: '0.4rem', fontFamily: 'monospace', color: '#4ade80' }}>{r.user}:{r.password}</td>
+                    </tr>
+                  ))}
+                  {credSprayResults.filter(r => r.success).length === 0 && (
+                    <tr><td colSpan="4" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No successful logins yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+
+      case "Exploit-Mapper":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>CVE → Exploit Mapper</h3>
+              <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                const r = await apiCall(`/exploit_mapper/map?target=${encodeURIComponent(activeTarget?.ip || '')}`, 'POST');
+                if (r?.suggestions) setExploitMappings(r.suggestions);
+              }}>MAP EXPLOITS FOR {activeTarget?.ip || 'ALL'}</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {exploitMappings.length === 0
+                ? <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Select a target device and click MAP EXPLOITS to query the CVE database.</p>
+                : exploitMappings.map((m, i) => (
+                  <div key={i} className="glass-card" style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.02)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <span style={{ color: '#f59e0b', fontWeight: 700, fontSize: '0.75rem' }}>{m.cve}</span>
+                      <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>{m.description || m.module}</p>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: '1rem' }}>
+                      <span style={{ fontSize: '0.65rem', color: m.cvss >= 9 ? '#ef4444' : m.cvss >= 7 ? '#f97316' : '#eab308', fontWeight: 700 }}>CVSS {m.cvss}</span>
+                      {m.msf_module && <p style={{ fontSize: '0.6rem', color: '#a78bfa', fontFamily: 'monospace', marginTop: '0.2rem' }}>{m.msf_module}</p>}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+        );
+
+      case "Web-Scanner":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Web Application Scanner</h3>
+              <span className={`status-badge ${webScanFindings.length > 0 ? 'active' : ''}`}>{webScanFindings.length} FINDINGS</span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input value={webScanTarget} onChange={e => setWebScanTarget(e.target.value)} placeholder="https://target.example.com"
+                style={{ flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                const raw = webScanTarget || `http://${activeTarget?.ip}`;
+                let host = raw, port = 80, https = false;
+                try {
+                  const u = new URL(raw.includes('://') ? raw : 'http://' + raw);
+                  host = u.hostname;
+                  https = u.protocol === 'https:';
+                  port = u.port ? parseInt(u.port) : (https ? 443 : 80);
+                } catch { host = raw.replace(/^https?:\/\//, '').split('/')[0].split(':')[0]; }
+                await apiCall('/web_scanner/scan', 'POST', { host, port, https });
+                setTimeout(async () => {
+                  const r = await apiCall('/web_scanner/findings');
+                  if (r?.findings) setWebScanFindings(r.findings);
+                }, 3000);
+              }}>SCAN</button>
+              <button className="btn-primary" style={{ fontSize: '0.7rem', opacity: 0.7 }} onClick={async () => {
+                const r = await apiCall('/web_scanner/findings');
+                if (r) setWebScanFindings(r.findings || []);
+              }}>REFRESH</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              {webScanFindings.map((f, i) => (
+                <div key={i} className="glass-card" style={{ padding: '0.6rem 0.9rem', background: 'rgba(255,255,255,0.02)', display: 'flex', justifyContent: 'space-between' }}>
+                  <div>
+                    <span style={{ fontSize: '0.7rem', fontWeight: 700, color: f.severity === 'CRITICAL' ? '#ef4444' : f.severity === 'HIGH' ? '#f97316' : f.severity === 'MEDIUM' ? '#eab308' : '#6b7280' }}>
+                      [{f.severity}]
+                    </span>
+                    <span style={{ fontSize: '0.72rem', marginLeft: '0.5rem' }}>{f.title || f.type}</span>
+                    <p style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: '0.15rem', fontFamily: 'monospace' }}>{f.url}</p>
+                  </div>
+                </div>
+              ))}
+              {webScanFindings.length === 0 && <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Enter a URL and click SCAN to begin OWASP detection.</p>}
+            </div>
+          </div>
+        );
+
+      case "Hash-Cracker":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Hash Cracker</h3>
+              <span className={`status-badge ${hashResults.filter(r => r.cracked).length > 0 ? 'active' : ''}`}>
+                {hashResults.filter(r => r.cracked).length} CRACKED
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input value={hashInput} onChange={e => setHashInput(e.target.value)} placeholder="Hash or hashcat NetNTLMv1 line"
+                style={{ flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.72rem', fontFamily: 'monospace' }} />
+              <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                await apiCall('/hash_cracker/crack', 'POST', { hash: hashInput });
+                setTimeout(async () => {
+                  const r = await apiCall('/hash_cracker/results');
+                  if (r?.results) setHashResults(r.results);
+                }, 2000);
+              }}>CRACK</button>
+              <button className="btn-primary" style={{ fontSize: '0.7rem', opacity: 0.7 }} onClick={async () => {
+                const r = await apiCall('/hash_cracker/results');
+                if (r) setHashResults(r.results || []);
+              }}>REFRESH</button>
+            </div>
+            {rogueRADIUSHashes.length > 0 && (
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.3)', borderRadius: '6px', padding: '0.5rem 0.75rem' }}>
+                {rogueRADIUSHashes.length} MSCHAPv2 hash{rogueRADIUSHashes.length > 1 ? 'es' : ''} from Rogue-RADIUS —&nbsp;
+                <button style={{ background: 'none', border: 'none', color: '#a855f7', cursor: 'pointer', fontSize: '0.65rem', padding: 0 }} onClick={() => {
+                  setHashInput(rogueRADIUSHashes[rogueRADIUSHashes.length - 1]?.hashcat || '');
+                }}>load latest</button>
+              </div>
+            )}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <table style={{ width: '100%', fontSize: '0.7rem', borderCollapse: 'collapse' }}>
+                <thead><tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--glass-border)' }}>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>HASH</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>RESULT</th>
+                </tr></thead>
+                <tbody>
+                  {hashResults.map((r, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                      <td style={{ padding: '0.4rem', fontFamily: 'monospace', color: 'var(--text-secondary)', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.hash}</td>
+                      <td style={{ padding: '0.4rem', fontFamily: 'monospace', color: r.cracked ? '#4ade80' : '#6b7280' }}>{r.cracked ? r.password : 'NOT FOUND'}</td>
+                    </tr>
+                  ))}
+                  {hashResults.length === 0 && <tr><td colSpan="2" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No hashes queued.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+
+      case "OSINT-Enricher":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>OSINT Enricher</h3>
+              <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                const r = await apiCall('/osint/enrich_all', 'POST');
+                if (r) setOsintData(r);
+              }}>ENRICH ALL TARGETS</button>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input value={osintIP} onChange={e => setOsintIP(e.target.value)} placeholder="IP or hostname"
+                style={{ flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                const r = await apiCall(`/osint/enrich?ip=${osintIP || activeTarget?.ip}`);
+                if (r) setOsintData(r);
+              }}>ENRICH</button>
+            </div>
+            {osintData && (
+              <div style={{ flex: 1, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '0.75rem' }}>
+                {Object.entries(osintData).map(([ip, info]) => (
+                  <div key={ip} className="glass-card" style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.02)', fontSize: '0.7rem' }}>
+                    <p style={{ color: 'var(--neo-cyan)', fontWeight: 700, marginBottom: '0.5rem' }}>{ip}</p>
+                    {info.hostname && <p><span style={{ color: 'var(--text-secondary)' }}>HOST</span> {info.hostname}</p>}
+                    {info.org && <p><span style={{ color: 'var(--text-secondary)' }}>ORG</span> {info.org}</p>}
+                    {info.country && <p><span style={{ color: 'var(--text-secondary)' }}>GEO</span> {info.city || ''} {info.country}</p>}
+                    {info.asn && <p><span style={{ color: 'var(--text-secondary)' }}>ASN</span> {info.asn}</p>}
+                    {info.open_ports?.length > 0 && <p><span style={{ color: 'var(--text-secondary)' }}>PORTS</span> {info.open_ports.join(', ')}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {!osintData && <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Enter an IP or click ENRICH ALL TARGETS to run rDNS, WHOIS, GeoIP, and Shodan lookups.</p>}
+          </div>
+        );
+
+      case "Report-Builder":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.5rem', alignItems: 'center', justifyContent: 'center' }}>
+            <h3>Pentest Report Generator</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'center', maxWidth: '400px' }}>
+              Generates a full HTML/PDF pentest report for campaign <strong style={{ color: 'var(--neo-cyan)' }}>{activeCampaign}</strong> covering all discovered devices, credentials, vulnerabilities, and findings.
+            </p>
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button className="btn-primary" onClick={async () => {
+                const r = await apiCall('/report/generate', 'POST', { campaign_id: activeCampaign });
+                if (r?.report_id || r?.status) {
+                  setReportHTML(`${import.meta.env.VITE_API_URL || "http://localhost:8001"}/report/${activeCampaign}/html`);
+                }
+              }}>GENERATE REPORT</button>
+              {reportHTML && (
+                <a href={reportHTML} target="_blank" rel="noreferrer"
+                  style={{ display: 'inline-block', padding: '0.5rem 1rem', background: 'rgba(6,182,212,0.1)', border: '1px solid var(--neo-cyan)', color: 'var(--neo-cyan)', borderRadius: '4px', fontSize: '0.75rem', textDecoration: 'none' }}>
+                  VIEW REPORT
+                </a>
+              )}
+            </div>
+            {reportHTML && (
+              <div style={{ width: '100%', flex: 1, borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--glass-border)' }}>
+                <iframe src={reportHTML} style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} title="Pentest Report" />
+              </div>
+            )}
+          </div>
+        );
+
+      case "WiFi-Fingerprinter":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>OS Behavioral Fingerprinter</h3>
+              <span className={`status-badge ${fpProfiles.length > 0 ? 'active' : ''}`}>{fpProfiles.length} PROFILES</span>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Deauths clients, measures reconnect latency, probe patterns, and EAPOL spacing to fingerprint device OS without sending identifying packets.
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input value={fpTargetBssid} onChange={e => setFpTargetBssid(e.target.value)} placeholder="AP BSSID (e.g. aa:bb:cc:dd:ee:ff)"
+                style={{ flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem', fontFamily: 'monospace' }} />
+              <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                await apiCall('/wifi_fingerprint/start', 'POST', {});
+                await apiCall('/wifi_fingerprint/fingerprint', 'POST', { bssid: fpTargetBssid || (networks[0]?.mac || 'ff:ff:ff:ff:ff:ff') });
+                setTimeout(async () => {
+                  const r = await apiCall('/wifi_fingerprint/profiles');
+                  if (r?.profiles) setFpProfiles(r.profiles);
+                }, 5000);
+              }}>FINGERPRINT AP</button>
+              <button className="btn-primary" style={{ fontSize: '0.7rem', opacity: 0.7 }} onClick={async () => {
+                const r = await apiCall('/wifi_fingerprint/profiles');
+                if (r?.profiles) setFpProfiles(r.profiles);
+              }}>REFRESH</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <table style={{ width: '100%', fontSize: '0.7rem', borderCollapse: 'collapse' }}>
+                <thead><tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--glass-border)' }}>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>MAC</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>OS GUESS</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>CONF</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>RECONNECT</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>PROBES</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>SSID HISTORY</th>
+                </tr></thead>
+                <tbody>
+                  {fpProfiles.map((p, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                      <td style={{ padding: '0.4rem', fontFamily: 'monospace', color: 'var(--neo-cyan)' }}>{p.mac}</td>
+                      <td style={{ padding: '0.4rem', color: '#f59e0b', fontWeight: 700 }}>{p.os_guess}</td>
+                      <td style={{ padding: '0.4rem', color: p.confidence >= 0.7 ? '#4ade80' : p.confidence >= 0.4 ? '#f59e0b' : '#6b7280' }}>{Math.round((p.confidence || 0) * 100)}%</td>
+                      <td style={{ padding: '0.4rem' }}>{p.reconnect_ms != null ? `${p.reconnect_ms}ms` : '—'}</td>
+                      <td style={{ padding: '0.4rem', color: 'var(--text-secondary)' }}>{p.probe_pattern}</td>
+                      <td style={{ padding: '0.4rem', fontSize: '0.65rem', color: 'var(--text-secondary)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {(p.ssid_history || []).join(', ') || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                  {fpProfiles.length === 0 && <tr><td colSpan="6" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No profiles yet. Enter a BSSID and fingerprint.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+
+      case "Identity-Correlator":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Cross-Protocol Identity Engine</h3>
+              <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                const r = await apiCall('/identity/correlate', 'POST');
+                if (r?.identities) setIdentities(r.identities);
+              }}>CORRELATE IDENTITIES</button>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Fuses RADIUS AD usernames, portal harvests, sniffer credentials, and device hostnames into ranked human profiles.
+            </p>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {identities.map((id, i) => (
+                <div key={i} className="glass-card" style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.02)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
+                      <span style={{ color: 'var(--neo-cyan)', fontWeight: 800, fontSize: '0.8rem' }}>{id.username}</span>
+                      {id.domain && <span style={{ fontSize: '0.6rem', color: '#a78bfa', background: 'rgba(168,85,247,0.1)', padding: '0.1rem 0.35rem', borderRadius: '3px' }}>{id.domain}</span>}
+                      {(id.sources || []).map(s => (
+                        <span key={s} style={{ fontSize: '0.55rem', color: '#22c55e', background: 'rgba(34,197,94,0.1)', padding: '0.1rem 0.35rem', borderRadius: '3px' }}>{s}</span>
+                      ))}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.15rem', fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                      {id.email && <span><span style={{ color: '#f59e0b' }}>EMAIL</span> {id.email}</span>}
+                      {id.device_ip && <span><span style={{ color: '#f59e0b' }}>IP</span> {id.device_ip}</span>}
+                      {id.hostname && <span><span style={{ color: '#f59e0b' }}>HOST</span> {id.hostname}</span>}
+                      {id.device_vendor && <span><span style={{ color: '#f59e0b' }}>VENDOR</span> {id.device_vendor}</span>}
+                    </div>
+                    {id.ntlm_hash && <p style={{ fontSize: '0.6rem', fontFamily: 'monospace', color: '#6b7280', marginTop: '0.3rem', wordBreak: 'break-all' }}>{id.ntlm_hash}</p>}
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 900, color: id.confidence >= 0.7 ? '#4ade80' : id.confidence >= 0.4 ? '#f59e0b' : '#6b7280' }}>
+                      {Math.round((id.confidence || 0) * 100)}%
+                    </div>
+                    <div style={{ fontSize: '0.55rem', color: 'var(--text-secondary)' }}>CONFIDENCE</div>
+                  </div>
+                </div>
+              ))}
+              {identities.length === 0 && <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Run Rogue-AP, Rogue-RADIUS, or Sniffer to collect data, then click CORRELATE IDENTITIES.</p>}
+            </div>
+          </div>
+        );
+
+      case "Cred-Genome":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Credential Genome</h3>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                  const r = await apiCall('/cred_genome/analyze', 'POST');
+                  if (r?.policy?.summary) setGenomePolicy(r.policy.summary);
+                }}>ANALYZE GRAMMAR</button>
+                <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                  const r = await apiCall('/cred_genome/generate', 'POST', { count: 100 });
+                  if (r?.credentials) setGenomeCreds(r.credentials);
+                }}>GENERATE CREDS</button>
+              </div>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Infers organisational password grammar from captured passwords and generates statistically targeted credential pairs.
+            </p>
+            {genomePolicy && (
+              <div className="glass-card" style={{ padding: '0.75rem', background: 'rgba(34,197,94,0.03)', border: '1px solid rgba(34,197,94,0.2)', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '0.35rem', fontSize: '0.68rem' }}>
+                <span><span style={{ color: '#22c55e' }}>LENGTH</span> {genomePolicy.min_length}–{genomePolicy.max_length} (avg {genomePolicy.avg_length})</span>
+                <span><span style={{ color: '#22c55e' }}>UPPER</span> {genomePolicy.req_upper ? 'REQUIRED' : 'optional'}</span>
+                <span><span style={{ color: '#22c55e' }}>DIGIT</span> {genomePolicy.req_digit ? 'REQUIRED' : 'optional'}</span>
+                <span><span style={{ color: '#22c55e' }}>SPECIAL</span> {genomePolicy.req_special ? 'REQUIRED' : 'optional'}</span>
+                <span style={{ gridColumn: 'span 2' }}><span style={{ color: '#22c55e' }}>PATTERNS</span> {(genomePolicy.top_patterns || []).join(' · ')}</span>
+                <span style={{ gridColumn: 'span 2' }}><span style={{ color: '#22c55e' }}>WORDS</span> {(genomePolicy.common_words || []).join(', ')}</span>
+              </div>
+            )}
+            {genomeCreds.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{genomeCreds.length} targeted pairs generated</span>
+                <button className="btn-primary" style={{ fontSize: '0.65rem' }} onClick={async () => {
+                  for (const c of genomeCreds.slice(0, 20)) {
+                    await apiCall('/cred_spray/run', 'POST', { credential: `${c.username}:${c.password}` });
+                  }
+                }}>PIPE TOP-20 → SPRAY</button>
+              </div>
+            )}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <table style={{ width: '100%', fontSize: '0.7rem', borderCollapse: 'collapse' }}>
+                <thead><tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--glass-border)' }}>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>USERNAME</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>PASSWORD</th>
+                  <th style={{ padding: '0.4rem', textAlign: 'left' }}>CONFIDENCE</th>
+                </tr></thead>
+                <tbody>
+                  {genomeCreds.map((c, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                      <td style={{ padding: '0.4rem', color: 'var(--neo-cyan)', fontFamily: 'monospace' }}>{c.username}</td>
+                      <td style={{ padding: '0.4rem', fontFamily: 'monospace', color: '#f87171' }}>{c.password}</td>
+                      <td style={{ padding: '0.4rem', color: c.confidence >= 0.6 ? '#4ade80' : '#f59e0b' }}>{Math.round(c.confidence * 100)}%</td>
+                    </tr>
+                  ))}
+                  {genomeCreds.length === 0 && <tr><td colSpan="3" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Analyze captured passwords first, then generate.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+
+      case "Baseline-Calibrator":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Noise-Floor Baseline</h3>
+              <span className={`status-badge ${baselineActive ? 'active' : ''}`}>{baselineActive ? 'OBSERVING' : baselineData ? 'READY' : 'IDLE'}</span>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Passively measures ARP, DNS, and TCP-SYN rates to compute safe injection delays that stay statistically indistinguishable from baseline traffic.
+            </p>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>OBSERVE FOR</span>
+              <input type="number" value={baselineSecs} onChange={e => setBaselineSecs(Number(e.target.value))} min={10} max={300}
+                style={{ width: '70px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'var(--neo-cyan)', padding: '0.3rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', textAlign: 'center' }} />
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>seconds</span>
+              <button className="btn-primary" style={{ fontSize: '0.7rem' }} disabled={baselineActive} onClick={async () => {
+                setBaselineActive(true);
+                setBaselineData(null);
+                await apiCall('/baseline/start', 'POST', { observe_secs: baselineSecs });
+                setTimeout(async () => {
+                  const r = await apiCall('/baseline/status');
+                  if (r?.baseline) setBaselineData(r.baseline);
+                  setBaselineActive(false);
+                }, (baselineSecs + 6) * 1000);
+              }}>START OBSERVATION</button>
+            </div>
+            {baselineData && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
+                {[
+                  { label: 'ARP', rate: baselineData.arp_per_min, delay: baselineData.safe_arp_delay_s, color: '#22c55e' },
+                  { label: 'DNS', rate: baselineData.dns_per_min, delay: baselineData.safe_dns_delay_s, color: '#22d3ee' },
+                  { label: 'SYN', rate: baselineData.syn_per_min, delay: baselineData.safe_syn_delay_s, color: '#a78bfa' },
+                ].map(m => (
+                  <div key={m.label} className="glass-card" style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.02)', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', letterSpacing: '1px' }}>{m.label} / MIN</div>
+                    <div style={{ fontSize: '1.6rem', fontWeight: 900, color: m.color, margin: '0.25rem 0' }}>{m.rate}</div>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>safe delay</div>
+                    <div style={{ fontSize: '0.85rem', color: m.color, fontWeight: 700 }}>{m.delay}s</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {baselineData && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.7rem' }}>
+                <div className="glass-card" style={{ padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.02)' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>AVG PACKET SIZE</span>
+                  <span style={{ float: 'right', color: 'var(--neo-cyan)', fontWeight: 700 }}>{baselineData.avg_packet_bytes} B</span>
+                </div>
+                <div className="glass-card" style={{ padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.02)' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>OBSERVED</span>
+                  <span style={{ float: 'right', color: 'var(--neo-cyan)', fontWeight: 700 }}>{baselineData.observed_seconds}s</span>
+                </div>
+              </div>
+            )}
+            {!baselineData && !baselineActive && <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Start observation to calibrate safe injection timing for ARP spoof, DNS hijack, and TCP spray attacks.</p>}
+          </div>
+        );
+
+      case "Mesh-Injector":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>802.11s Mesh Node Injector</h3>
+              <span className={`status-badge ${meshActive ? 'active' : ''}`} style={{ color: meshActive ? '#4ade80' : undefined }}>
+                {meshActive ? '● INJECTING' : '○ IDLE'}
+              </span>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Injects a rogue 802.11s mesh node advertising a superior Airtime Link Metric. Legitimate mesh nodes route traffic through the attacker transparently — no deauth, no captive portal.
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <input value={meshId} onChange={e => setMeshId(e.target.value)} placeholder="Mesh ID (auto-detect if blank)"
+                style={{ flex: 1, minWidth: '180px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <button className="btn-primary" style={{ fontSize: '0.7rem', opacity: 0.8 }} onClick={async () => {
+                const r = await apiCall('/mesh/scan', 'POST', {});
+                if (r?.meshes) setMeshDiscovered(r.meshes);
+              }}>PASSIVE SCAN</button>
+              <button className="btn-primary" style={{ fontSize: '0.7rem', background: meshActive ? 'rgba(239,68,68,0.15)' : undefined, borderColor: meshActive ? '#ef4444' : undefined }}
+                onClick={async () => {
+                  if (meshActive) {
+                    await apiCall('/mesh/stop', 'POST', {});
+                    setMeshActive(false);
+                  } else {
+                    await apiCall('/mesh/start', 'POST', { mesh_id: meshId, scan_first: !meshId });
+                    setMeshActive(true);
+                  }
+                }}>{meshActive ? 'STOP INJECTION' : 'INJECT NODE'}</button>
+            </div>
+            {meshDiscovered.length > 0 && (
+              <div>
+                <h4 style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>DISCOVERED MESHES</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  {meshDiscovered.map((m, i) => (
+                    <div key={i} className="glass-card" style={{ padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.02)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
+                      onClick={() => setMeshId(m.mesh_id)}>
+                      <div>
+                        <span style={{ color: 'var(--neo-cyan)', fontWeight: 700, fontSize: '0.75rem' }}>{m.mesh_id || '(unnamed)'}</span>
+                        <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>{m.bssid}</span>
+                      </div>
+                      <span style={{ fontSize: '0.65rem', color: '#f59e0b' }}>ch{m.channel}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {meshActive && meshStatus && (
+              <div className="glass-card" style={{ padding: '0.75rem', background: 'rgba(34,197,94,0.04)', border: '1px solid rgba(34,197,94,0.2)', fontSize: '0.72rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem' }}>
+                <span><span style={{ color: 'var(--text-secondary)' }}>MESH ID</span> <span style={{ color: '#4ade80', fontFamily: 'monospace' }}>{meshStatus.mesh_id}</span></span>
+                <span><span style={{ color: 'var(--text-secondary)' }}>CHANNEL</span> <span style={{ color: '#4ade80' }}>{meshStatus.channel}</span></span>
+                <span><span style={{ color: 'var(--text-secondary)' }}>IFACE</span> <span style={{ color: '#4ade80' }}>{meshStatus.iface}</span></span>
+                <span><span style={{ color: 'var(--text-secondary)' }}>BEACONS</span> <span style={{ color: '#4ade80' }}>~10/sec</span></span>
+              </div>
+            )}
+          </div>
+        );
+
+      case "Rogue-AP":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Evil Twin AP</h3>
+              <span className={`status-badge ${rogueAPActive ? 'active' : ''}`}>
+                <span className={rogueAPActive ? 'pulse' : ''}>{rogueAPActive ? '● LIVE' : '○ IDLE'}</span>
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <input value={rogueAPSSID} onChange={e => setRogueAPSSID(e.target.value)} placeholder="SSID to impersonate"
+                style={{ flex: 1, minWidth: '160px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <select value={rogueAPMode} onChange={e => setRogueAPMode(e.target.value)}
+                style={{ fontSize: '0.7rem', background: 'rgba(0,0,0,0.6)', color: 'white', border: '1px solid var(--glass-border)', borderRadius: '4px', padding: '0.4rem 0.6rem' }}>
+                <option value="portal">Portal — harvest creds</option>
+                <option value="bridge">Bridge — silent MITM</option>
+              </select>
+              <button className={`btn-primary ${rogueAPActive ? 'btn-danger' : ''}`} onClick={async () => {
+                if (rogueAPActive) {
+                  await apiCall('/rogue_ap/stop', 'POST', {});
+                  setRogueAPActive(false);
+                } else {
+                  const r = await apiCall('/rogue_ap/start', 'POST', { ssid: rogueAPSSID, mode: rogueAPMode });
+                  if (r) setRogueAPActive(true);
+                }
+              }}>{rogueAPActive ? 'STOP AP' : 'LAUNCH AP'}</button>
+              {rogueAPActive && (
+                <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                  const r = await apiCall('/rogue_ap/creds');
+                  if (r) setRogueAPCreds(r.creds || []);
+                }}>REFRESH CREDS ({rogueAPCreds.length})</button>
+              )}
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              {rogueAPCreds.length === 0
+                ? <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>No credentials captured yet. Launch the AP and wait for clients to connect.</p>
+                : rogueAPCreds.map((c, i) => (
+                  <div key={i} className="glass-card" style={{ padding: '0.5rem 0.8rem', background: 'rgba(255,255,255,0.02)', display: 'flex', gap: '0.5rem', fontSize: '0.7rem' }}>
+                    <span style={{ color: 'var(--neo-cyan)' }}>{c.src_ip}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>→</span>
+                    <span style={{ color: '#f87171', fontWeight: 700 }}>{c.user}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>:{c.password}</span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        );
+
+      case "Rogue-RADIUS":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>WPA-Enterprise RADIUS Trap</h3>
+              <span className={`status-badge ${rogueRADIUSActive ? 'active' : ''}`}>
+                <span className={rogueRADIUSActive ? 'pulse' : ''}>{rogueRADIUSActive ? '● LIVE' : '○ IDLE'}</span>
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <input value={rogueRADIUSSSID} onChange={e => setRogueRADIUSSSID(e.target.value)} placeholder="Corp SSID (e.g. CorpNet)"
+                style={{ flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', color: 'white', padding: '0.4rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem' }} />
+              <button className={`btn-primary ${rogueRADIUSActive ? 'btn-danger' : ''}`} onClick={async () => {
+                if (rogueRADIUSActive) {
+                  await apiCall('/rogue_radius/stop', 'POST', {});
+                  setRogueRADIUSActive(false);
+                } else {
+                  const r = await apiCall('/rogue_radius/start', 'POST', { ssid: rogueRADIUSSSID });
+                  if (r) setRogueRADIUSActive(true);
+                }
+              }}>{rogueRADIUSActive ? 'STOP RADIUS' : 'LAUNCH RADIUS'}</button>
+              {rogueRADIUSActive && (
+                <button className="btn-primary" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                  const r = await apiCall('/rogue_radius/hashes');
+                  if (r) setRogueRADIUSHashes(r.hashes || []);
+                }}>REFRESH HASHES ({rogueRADIUSHashes.length})</button>
+              )}
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              {rogueRADIUSHashes.length === 0
+                ? <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>No MSCHAPv2 hashes captured yet. Launch the trap and wait for enterprise clients.</p>
+                : rogueRADIUSHashes.map((h, i) => (
+                  <div key={i} className="glass-card" style={{ padding: '0.5rem 0.8rem', background: 'rgba(255,255,255,0.02)', fontSize: '0.65rem' }}>
+                    <span style={{ color: '#a855f7', fontWeight: 700 }}>{h.identity}</span>
+                    <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', wordBreak: 'break-all', fontFamily: 'monospace' }}>{h.hashcat}</span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        );
+
       default:
         return (
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ textAlign: 'center' }}>
-              <h3 style={{ color: 'var(--text-secondary)' }}>{activePlugin.toUpperCase()}</h3>
-              <p style={{ marginTop: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Operational module ready. Proceed to command.</p>
-              <button className="btn-primary" style={{ marginTop: '2rem', width: '200px' }} onClick={() => apiCall('/cyber_strike/start', 'POST', { role: 'Shadow' })}>INVOKE</button>
+              <h3 style={{ color: 'var(--text-secondary)' }}>{plugin.toUpperCase()}</h3>
+              <p style={{ marginTop: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Module loaded. No dedicated interface — use the CLI panel or API directly.</p>
+              <button className="btn-primary" style={{ marginTop: '2rem', width: '220px' }} onClick={() => {
+                const slug = plugin.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+                apiCall(`/${slug}/start`, 'POST', {});
+              }}>START {plugin.toUpperCase()}</button>
             </div>
           </div>
         );
@@ -603,33 +1666,129 @@ const Dashboard = () => {
   return (
     <div className="dashboard-container">
       <aside className="sidebar">
+        {/* Logo + Ctrl+K hint */}
         <div>
-          <h1 className="accent-text" style={{ fontSize: '1.6rem' }}>MOONKEEP v2</h1>
-          <p style={{ fontSize: '0.6rem', letterSpacing: '4px', fontWeight: 900, color: 'var(--text-secondary)' }}>SOVEREIGN ELITE</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <h1 className="accent-text" style={{ fontSize: '1.6rem' }}>MOONKEEP</h1>
+            <button className="cmd-palette-trigger" onClick={() => { setCmdOpen(true); setCmdQuery(''); }} title="Ctrl+K">
+              <span style={{ fontSize: '0.5rem', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '4px', padding: '0.15rem 0.35rem', fontFamily: 'Fira Code', letterSpacing: '1px' }}>⌘K</span>
+            </button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.15rem' }}>
+            <span style={{ fontSize: '0.55rem', letterSpacing: '3px', fontWeight: 900, color: 'var(--text-secondary)' }}>SOVEREIGN ELITE</span>
+            <span style={{ fontSize: '0.45rem', background: 'rgba(99,102,241,0.2)', border: '1px solid rgba(99,102,241,0.4)', color: '#a78bfa', padding: '0.1rem 0.3rem', borderRadius: '3px', fontWeight: 900, letterSpacing: '1px' }}>v2</span>
+          </div>
         </div>
 
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1, overflowY: 'auto' }}>
-          {plugins.map(p => (
-            <button
-              key={p.name}
-              className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
-              onClick={() => setActivePlugin(p.name)}
-            >
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: 0, flex: 1, overflowY: 'auto', paddingRight: '0.1rem' }}>
+          {/* ── Favorites strip ── */}
+          {favPlugins.length > 0 && (
+            <div>
+              <div className="nav-category" style={{ color: '#f59e0b' }}>★ PINNED</div>
+              {favPlugins.map(name => {
+                const badge = pluginFindings[name];
+                return (
+                  <button key={name} className={`btn-primary nav-btn ${activePlugin === name ? 'active' : ''}`}
+                    style={{ marginBottom: '0.15rem', paddingLeft: '0.6rem', justifyContent: 'space-between' }}
+                    onClick={() => setActivePlugin(name)}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#f59e0b', flexShrink: 0 }} />
+                      {name.toUpperCase()}
+                    </span>
+                    {badge > 0 && <span className="nav-badge">{badge}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── Category nav ── */}
+          {Object.entries(PLUGIN_CATEGORIES).map(([cat, catNames]) => {
+            const available = plugins.filter(p => catNames.includes(p.name));
+            if (available.length === 0) return null;
+            return (
+              <div key={cat}>
+                <div className="nav-category" style={{ color: CAT_COLORS[cat] }}>{cat}</div>
+                {available.map(p => {
+                  const badge = pluginFindings[p.name];
+                  const isLive = (p.name === 'Sniffer' && snifferActive) ||
+                    (p.name === 'Rogue-AP' && rogueAPActive) ||
+                    (p.name === 'Rogue-RADIUS' && rogueRADIUSActive) ||
+                    (p.name === 'Mesh-Injector' && meshActive) ||
+                    (p.name === 'Baseline-Calibrator' && baselineActive) ||
+                    (p.name === 'Spoofer' && spoofing) ||
+                    (p.name === 'Proxy' && proxyActive);
+                  const isFav = favPlugins.includes(p.name);
+                  return (
+                    <div key={p.name} className="nav-item-row">
+                      <button
+                        className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
+                        style={{ flex: 1, marginBottom: '0.15rem', paddingLeft: '0.6rem', justifyContent: 'space-between' }}
+                        onClick={() => setActivePlugin(p.name)}
+                      >
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <span style={{
+                            width: 5, height: 5, borderRadius: '50%', flexShrink: 0,
+                            background: isLive ? '#22c55e' : activePlugin === p.name ? CAT_COLORS[cat] : 'rgba(255,255,255,0.15)',
+                            boxShadow: isLive ? '0 0 5px #22c55e' : 'none',
+                            animation: isLive ? 'pulse 2s ease-in-out infinite' : 'none',
+                          }} />
+                          {p.name.toUpperCase()}
+                        </span>
+                        {badge > 0 && <span className="nav-badge">{badge}</span>}
+                      </button>
+                      <button className="nav-pin-btn" onClick={() => toggleFav(p.name)} title={isFav ? 'Unpin' : 'Pin'} style={{ opacity: isFav ? 1 : 0 }}>
+                        {isFav ? '★' : '☆'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          {plugins.filter(p => !Object.values(PLUGIN_CATEGORIES).flat().includes(p.name)).map(p => (
+            <button key={p.name} className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
+              style={{ marginBottom: '0.15rem' }} onClick={() => setActivePlugin(p.name)}>
               {p.name.toUpperCase()}
             </button>
           ))}
         </nav>
 
-        <div className="glass-card" style={{ padding: '0.8rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span className="status-badge active" style={{ fontSize: '0.5rem' }}>EPIC.SYSTEM</span>
-          <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>8001</span>
+        {/* Engine status + theme toggle */}
+        <div className="glass-card" style={{ padding: '0.6rem 0.8rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+            <span className={`status-badge ${bcapStatus.running ? 'active' : ''}`} style={{ fontSize: '0.45rem' }}>
+              {bcapStatus.running ? 'ENGINE LIVE' : 'ENGINE IDLE'}
+            </span>
+            <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)' }}>{plugins.length} modules</span>
+          </div>
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+            <button
+              onClick={() => setRedOpsMode(m => !m)}
+              title="Toggle Red Ops / Dark mode"
+              style={{
+                background: redOpsMode ? 'rgba(239,68,68,0.15)' : 'transparent',
+                border: `1px solid ${redOpsMode ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.1)'}`,
+                borderRadius: '4px', padding: '0.2rem 0.4rem', cursor: 'pointer',
+                fontSize: '0.6rem', color: redOpsMode ? '#f87171' : 'var(--text-secondary)',
+                fontWeight: 700, letterSpacing: '1px',
+              }}>
+              {redOpsMode ? '◉ RED' : '○ DRK'}
+            </button>
+            <div style={{ textAlign: 'right' }}>
+              <span style={{ fontSize: '0.65rem', color: 'var(--neo-cyan)', fontWeight: 700 }}>:8001</span>
+              {bcapStatus.active_modules?.length > 0 && (
+                <div style={{ fontSize: '0.5rem', color: '#f59e0b', marginTop: '0.1rem' }}>{bcapStatus.active_modules.length} active</div>
+              )}
+            </div>
+          </div>
         </div>
       </aside>
 
       <main className="main-content">
-        <header className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem 2rem', alignItems: 'center' }}>
-          <div>
-            <h2 className="accent-text" style={{ fontSize: '1.1rem' }}>{activePlugin || "COMMANDER"}</h2>
+        <header className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1.5rem', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 0 }}>
+            <h2 className="accent-text" style={{ fontSize: '1.1rem', whiteSpace: 'nowrap' }}>{activePlugin || "COMMANDER"}</h2>
             <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Operational Surface Matrix</p>
           </div>
 
@@ -682,14 +1841,66 @@ const Dashboard = () => {
             />
             <span className="status-badge active" style={{ fontSize: '0.45rem', whiteSpace: 'nowrap' }}>{activeTarget?.ip ? 'LOCKED' : 'NONE'}</span>
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <span className="status-badge active">ADMIN_ACTIVE</span>
-            <p style={{ fontSize: '0.6rem', marginTop: '0.3rem', color: 'var(--neo-cyan)' }}>ROOT_SESSION</p>
+          {/* View controls */}
+          <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+            <button className="btn-primary" style={{ fontSize: '0.55rem', padding: '0.3rem 0.6rem', background: splitPanel ? 'rgba(99,102,241,0.2)' : undefined, borderColor: splitPanel ? '#6366f1' : undefined }}
+              onClick={() => { if (splitPanel) { setSplitPanel(null); } else { const others = plugins.filter(p => p.name !== activePlugin); setSplitPanel(others[0]?.name || null); } }}
+              title="Split pane (show two modules side-by-side)">
+              {splitPanel ? '▣ SPLIT ON' : '▤ SPLIT'}
+            </button>
+            <button className="btn-primary" style={{ fontSize: '0.55rem', padding: '0.3rem 0.6rem', background: logDrawerOpen ? 'rgba(99,102,241,0.2)' : undefined, borderColor: logDrawerOpen ? '#6366f1' : undefined }}
+              onClick={() => setLogDrawerOpen(o => !o)}
+              title="Toggle strike log drawer">
+              {logDrawerOpen ? '▲ LOG' : '▽ LOG'}
+            </button>
+            <span className="status-badge active" style={{ alignSelf: 'center' }}>ADMIN_ACTIVE</span>
           </div>
         </header>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 450px', gap: '1rem', flex: 1, overflow: 'hidden' }}>
-          {renderModuleUI()}
+        {/* ── Target Context Toolbar ── */}
+        {activeTarget && (
+          <div className="target-toolbar">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+              <span style={{ fontSize: '0.5rem', color: 'var(--text-secondary)', letterSpacing: '2px' }}>TARGET</span>
+              <span style={{ color: 'var(--neo-cyan)', fontFamily: 'Fira Code', fontWeight: 800, fontSize: '0.85rem' }}>{activeTarget.ip}</span>
+              {activeTarget.vendor && <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>{activeTarget.vendor}</span>}
+              {activeTarget.mac && activeTarget.mac !== 'manual' && <span style={{ fontSize: '0.55rem', color: '#71717a', fontFamily: 'Fira Code' }}>{activeTarget.mac}</span>}
+              {vulnCards.filter(v => v.ip === activeTarget.ip).length > 0 && (
+                <span style={{ fontSize: '0.5rem', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#f87171', borderRadius: '4px', padding: '0.1rem 0.3rem', fontWeight: 700 }}>
+                  {vulnCards.filter(v => v.ip === activeTarget.ip).length} VULNS
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '0.35rem', flexShrink: 0 }}>
+              <button className="btn-primary" style={{ fontSize: '0.5rem', padding: '0.2rem 0.5rem' }}
+                onClick={() => apiCall('/vuln_scan', 'GET', null)}>VULN SCAN</button>
+              <button className="btn-primary" style={{ fontSize: '0.5rem', padding: '0.2rem 0.5rem' }}
+                onClick={() => apiCall('/osint/enrich_all', 'POST', {})}>OSINT</button>
+              <button className="btn-primary" style={{ fontSize: '0.5rem', padding: '0.2rem 0.5rem' }}
+                onClick={() => apiCall('/wifi/deauth', 'POST', { target: 'FF:FF:FF:FF:FF:FF', ap: activeTarget.ip })}>DEAUTH</button>
+              <button className="btn-primary btn-danger" style={{ fontSize: '0.5rem', padding: '0.2rem 0.5rem' }}
+                onClick={() => apiCall('/wifi/auto_attack', 'POST', { bssid: activeTarget.ip })}>AUTO-ATTACK</button>
+              <button className="btn-ghost btn-primary" style={{ fontSize: '0.5rem', padding: '0.2rem 0.5rem' }}
+                onClick={() => setActiveTarget(null)}>✕ CLEAR</button>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '1rem', flex: 1, overflow: 'hidden', flexDirection: 'column' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: splitPanel ? `1fr 1fr 420px` : `1fr 420px`, gap: '1rem', flex: 1, overflow: 'hidden' }}>
+            <div key={activePlugin} style={{ display: 'contents' }}>{renderModuleUI()}</div>
+            {splitPanel && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0.25rem' }}>
+                  <select value={splitPanel} onChange={e => setSplitPanel(e.target.value)}
+                    style={{ background: 'rgba(0,0,0,0.6)', color: 'var(--neo-cyan)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.6rem', fontWeight: 700, cursor: 'pointer' }}>
+                    {plugins.map(p => <option key={p.name} value={p.name} style={{ background: '#000' }}>{p.name.toUpperCase()}</option>)}
+                  </select>
+                  <button className="btn-primary" style={{ fontSize: '0.5rem', padding: '0.2rem 0.4rem' }} onClick={() => setSplitPanel(null)}>✕</button>
+                </div>
+                <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>{renderModuleUI(splitPanel)}</div>
+              </div>
+            )}
 
           <aside className="glass-card" style={{ display: 'grid', gridTemplateRows: '28px 1fr 2fr 40px', gap: '0.5rem', overflow: 'hidden' }}>
             {/* Row 1: Header */}
@@ -699,7 +1910,7 @@ const Dashboard = () => {
             </div>
 
             {/* Row 2: Tactical Feed — fixed height, scrollable */}
-            <div style={{ background: 'black', borderRadius: '6px', border: '1px solid var(--glass-border)', padding: '0.5rem', overflowY: 'auto', fontFamily: 'Fira Code, monospace', fontSize: '0.6rem' }}>
+            <div ref={tacticalFeedRef} style={{ background: 'black', borderRadius: '6px', border: '1px solid var(--glass-border)', padding: '0.5rem', overflowY: 'auto', fontFamily: 'Fira Code, monospace', fontSize: '0.6rem' }}>
               {strikeLog.map((log, i) => (
                 <div key={i} style={{
                   margin: '0.2rem 0',
@@ -778,8 +1989,35 @@ const Dashboard = () => {
             </div>
 
             {/* Row 4: Action Button — always pinned at bottom */}
-            <button className="btn-primary active" style={{ height: '100%', fontSize: '0.7rem', flexShrink: 0 }} onClick={() => apiCall('/cyber_strike/start')}>INVOKE PROTOCOL</button>
+            <button className="btn-primary active" style={{ height: '100%', fontSize: '0.7rem', flexShrink: 0 }} onClick={() => apiCall('/cyber_strike/start', 'POST', { role: cyberStrikeRole })}>INVOKE PROTOCOL</button>
           </aside>
+          </div>
+
+          {/* ── Bottom Log Drawer ── */}
+          {logDrawerOpen && (
+            <div className="log-drawer">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0.75rem', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '0.55rem', fontWeight: 900, letterSpacing: '2px', color: '#a78bfa' }}>STRIKE LOG</span>
+                  <span className="status-badge active" style={{ fontSize: '0.4rem' }}>{strikeLog.length} ENTRIES</span>
+                </div>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <button className="btn-primary" style={{ fontSize: '0.5rem', padding: '0.15rem 0.4rem' }} onClick={() => setStrikeLog(["[#] LOG CLEARED"])}>CLEAR</button>
+                  <button className="btn-primary" style={{ fontSize: '0.5rem', padding: '0.15rem 0.4rem' }} onClick={() => setLogDrawerOpen(false)}>✕</button>
+                </div>
+              </div>
+              <div ref={tacticalFeedRef} style={{ flex: 1, overflowY: 'auto', padding: '0.4rem 0.75rem', fontFamily: 'Fira Code, monospace', fontSize: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+                {strikeLog.map((log, i) => (
+                  <div key={i} style={{
+                    color: log.includes('[!]') ? '#f43f5e' : log.includes('[<]') ? '#22c55e' : log.includes('[>]') ? '#06b6d4' : log.includes('[cap]') ? '#a78bfa' : 'var(--text-secondary)',
+                    padding: '0.05rem 0',
+                  }}>
+                    {log}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </main>
 
@@ -828,6 +2066,74 @@ const Dashboard = () => {
           </div>
         ))}
       </div>
+
+      {/* ── Command Palette (Ctrl+K) ── */}
+      {cmdOpen && (
+        <div className="cmd-overlay" onClick={() => setCmdOpen(false)}>
+          <div className="cmd-palette" onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>⌘</span>
+              <input
+                ref={cmdInputRef}
+                value={cmdQuery}
+                onChange={e => setCmdQuery(e.target.value)}
+                placeholder="Search modules, actions…"
+                style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'white', fontFamily: 'Fira Code, monospace', fontSize: '0.85rem' }}
+                onKeyDown={e => {
+                  if (e.key === 'Escape') setCmdOpen(false);
+                  if (e.key === 'Enter') {
+                    const filtered = [...plugins.map(p => p.name), 'Split', 'Log Drawer', 'Red Ops', 'Clear Log']
+                      .filter(n => n.toLowerCase().includes(cmdQuery.toLowerCase()));
+                    if (filtered[0]) {
+                      if (filtered[0] === 'Split') { setSplitPanel(plugins.find(p => p.name !== activePlugin)?.name); }
+                      else if (filtered[0] === 'Log Drawer') { setLogDrawerOpen(o => !o); }
+                      else if (filtered[0] === 'Red Ops') { setRedOpsMode(m => !m); }
+                      else if (filtered[0] === 'Clear Log') { setStrikeLog(["[#] LOG CLEARED"]); }
+                      else { setActivePlugin(filtered[0]); }
+                      setCmdOpen(false);
+                    }
+                  }
+                }}
+              />
+              <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>ESC to close</span>
+            </div>
+            <div style={{ maxHeight: '360px', overflowY: 'auto', padding: '0.4rem 0' }}>
+              {/* Action shortcuts */}
+              {[{ label: '▣ Toggle Split Pane', action: () => { setSplitPanel(s => s ? null : plugins.find(p => p.name !== activePlugin)?.name); setCmdOpen(false); } },
+                { label: '▽ Toggle Log Drawer', action: () => { setLogDrawerOpen(o => !o); setCmdOpen(false); } },
+                { label: `${redOpsMode ? '○' : '◉'} Toggle Red Ops Mode`, action: () => { setRedOpsMode(m => !m); setCmdOpen(false); } },
+                { label: '⎚ Clear Strike Log', action: () => { setStrikeLog(["[#] LOG CLEARED"]); setCmdOpen(false); } },
+              ].filter(a => !cmdQuery || a.label.toLowerCase().includes(cmdQuery.toLowerCase())).map(a => (
+                <div key={a.label} className="cmd-item cmd-action" onClick={a.action}>
+                  <span style={{ color: '#a78bfa', fontSize: '0.65rem', marginRight: '0.5rem' }}>⚡</span>
+                  {a.label}
+                </div>
+              ))}
+              {/* Module results */}
+              {plugins
+                .filter(p => !cmdQuery || p.name.toLowerCase().includes(cmdQuery.toLowerCase()))
+                .map(p => {
+                  const cat = Object.entries(PLUGIN_CATEGORIES).find(([, names]) => names.includes(p.name))?.[0];
+                  const badge = pluginFindings[p.name];
+                  const isFav = favPlugins.includes(p.name);
+                  return (
+                    <div key={p.name} className={`cmd-item ${activePlugin === p.name ? 'cmd-item-active' : ''}`}
+                      onClick={() => { setActivePlugin(p.name); setCmdOpen(false); }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: CAT_COLORS[cat] || '#6366f1', flexShrink: 0, marginRight: '0.5rem' }} />
+                      <span style={{ flex: 1 }}>{p.name.toUpperCase()}</span>
+                      {badge > 0 && <span className="nav-badge" style={{ marginRight: '0.5rem' }}>{badge}</span>}
+                      <span style={{ fontSize: '0.5rem', color: 'var(--text-secondary)', marginRight: '0.5rem' }}>{cat}</span>
+                      <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: isFav ? '#f59e0b' : '#444', fontSize: '0.7rem', padding: 0 }}
+                        onClick={e => { e.stopPropagation(); toggleFav(p.name); }}>
+                        {isFav ? '★' : '☆'}
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

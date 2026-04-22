@@ -4,6 +4,7 @@ from core.plugin_manager import PluginManager
 from core.bettercap_adapter import NativeCapEngine
 from core.campaign_manager import CampaignManager
 from core.recon_adapter import recon_adapter
+from core.pipeline_engine import PipelineEngine
 import os
 import time
 import socket
@@ -55,6 +56,7 @@ target_store = TargetStore(campaign_manager)
 event_queue = asyncio.Queue()
 cap_engine = NativeCapEngine()
 connected_clients: set[WebSocket] = set()
+pipeline_engine = PipelineEngine()
 
 async def broadcast_events():
     while True:
@@ -67,6 +69,8 @@ async def broadcast_events():
                 dead_clients.add(client)
         for dead in dead_clients:
             connected_clients.discard(dead)
+        # Forward every event to the pipeline engine for automated chaining
+        asyncio.create_task(pipeline_engine.process_event(event))
 
 
 # Force discovery of all Elite modules
@@ -85,6 +89,7 @@ app = FastAPI(title="Moonkeep Elite API")
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(broadcast_events())
+    pipeline_engine.inject(plugin_manager, target_store, event_queue)
 
 app.add_middleware(
     CORSMiddleware,
@@ -111,13 +116,16 @@ print("NativeCapEngine online — type 'help' in the CLI")
 
 @app.get("/interfaces")
 def list_interfaces():
-    from scapy.all import conf
+    try:
+        from scapy.all import conf
+    except ImportError:
+        return []
     ifaces = []
     for iface in conf.ifaces.values():
         ifaces.append({
-            "name": iface.name,
-            "description": iface.description,
-            "ip": iface.ip
+            "name": getattr(iface, "name", None),
+            "description": getattr(iface, "description", None),
+            "ip": getattr(iface, "ip", None),
         })
     return ifaces
 
@@ -212,7 +220,7 @@ async def perform_scan(target: str = ""):
 @app.get("/wifi_scan")
 async def perform_wifi_scan():
     # Automatically turn on wifi.recon 
-    engine2 = plugin_manager.get_plugin("NativeCapEngine") or NativeCapEngine()
+    engine2 = cap_engine
     engine2.run_command("wifi.recon on")
     await asyncio.sleep(2) # brief pause to let it scan
 
@@ -225,7 +233,7 @@ async def perform_wifi_scan():
 
 @app.post("/wifi/deauth")
 async def wifi_deauth(payload: dict):
-    engine2 = plugin_manager.get_plugin("NativeCapEngine") or NativeCapEngine()
+    engine2 = cap_engine
     # Expecting {"target": "...", "ap": "..."} in the JSON body
     ap = payload.get("ap")
     target = payload.get("target", "ff:ff:ff:ff:ff:ff")
@@ -235,19 +243,6 @@ async def wifi_deauth(payload: dict):
     # The actual bettercap usually targets a specific client MAC, but broadcast is fine.
     res = engine2.run_command(f"wifi.deauth {target}")
     return res
-
-@app.post("/wifi/capture")
-async def wifi_capture(payload: dict):
-    engine2 = plugin_manager.get_plugin("NativeCapEngine") or NativeCapEngine()
-    # Expecting {"bssid": "..."} in the JSON body
-    bssid = payload.get("bssid")
-    if not bssid:
-        raise HTTPException(status_code=400, detail="BSSID is required")
-    # For capture, we can just ensure recon is on for that specific channel.
-    # The native engine doesn't currently have a dedicated save command that mimics old wifi-strike exactly,
-    # but we will just return a success payload for UI parity for now.
-    engine2.run_command("wifi.recon on")
-    return {"status": "ok", "message": f"Listening for handshakes from {bssid} (check logs folder)"}
 
 @app.get("/ai/analyze")
 async def trigger_ai_analysis():
@@ -279,16 +274,24 @@ async def secret_hunter_start():
 async def vulnerability_scan(target: str = None):
     if not target: target = target_store.last_target
     if not target: raise HTTPException(status_code=400, detail="No target specified")
+    plugin = plugin_manager.get_plugin("Vuln-Scanner")
+    if not plugin: raise HTTPException(status_code=404, detail="Vuln-Scanner not available")
     orchestrator = plugin_manager.get_plugin("AI-Orchestrator")
-    if orchestrator:
-        event_queue.put_nowait({"ts": time.time(), "plugin": "Vuln-Scanner", "type": "INFO", "data": {"msg": f"Initiating deep audit on {target}"}})
-        event_queue.put_nowait({
-            "ts": time.time(),
-            "type": "VULN_RESULT",
-            "plugin": "Vuln-Scanner", 
-            "data": {"cve": "CVE-2021-44228", "severity": "CRITICAL", "desc": "Log4j Remote Code Execution"}
-        })
-    return {"status": "Analysis in progress", "target": target}
+
+    async def _scan_and_ingest():
+        results = await plugin.scan_target(target)
+        if orchestrator and results:
+            orchestrator.ingest_vuln_results(target, results)
+
+    asyncio.create_task(_scan_and_ingest())
+    return {"status": "Vulnerability scan launched", "target": target}
+
+@app.get("/vuln_scan/results")
+async def vuln_scan_results():
+    plugin = plugin_manager.get_plugin("Vuln-Scanner")
+    if not plugin: raise HTTPException(status_code=404)
+    vulns = getattr(plugin, 'vulns', [])
+    return {"vulnerabilities": vulns, "count": len(vulns)}
 
 # CYBER STRIKE ENDPOINTS
 class CyberStrikeBody(BaseModel):
@@ -360,9 +363,12 @@ class ExfilBody(BaseModel):
 async def pe_exfiltrate(body: ExfilBody):
     plugin = plugin_manager.get_plugin("Post-Exploit")
     if not plugin: raise HTTPException(status_code=404, detail="Post-Exploit plugin not found")
-    target = body.target_session_id or (target_store.devices[0].get('ip') if target_store.devices else '192.168.1.1')
-    event_queue.put_nowait({"ts": time.time(), "plugin": "Post-Exploit", "type": "INFO", "data": {"msg": f"Harvesting data from session: {target}"}})
-    return {"status": "Exfiltration initiated", "target": target}
+    session_id = body.target_session_id or (
+        f"session_{target_store.devices[0].get('ip', '').replace('.', '_')}"
+        if target_store.devices else "local"
+    )
+    asyncio.create_task(plugin.exfiltrate_secrets(session_id))
+    return {"status": "exfiltration_launched", "session_id": session_id}
 
 @app.get("/post_exploit/persistence")
 async def pe_persistence(os: str = "windows"):
@@ -375,6 +381,12 @@ async def fuzz_mdns(ip: str = "224.0.0.251"):
     plugin = plugin_manager.get_plugin("Fuzzer")
     if not plugin: raise HTTPException(status_code=404)
     return await plugin.fuzz_mdns(ip)
+
+@app.post("/fuzzer/snmp")
+async def fuzz_snmp(ip: str):
+    plugin = plugin_manager.get_plugin("Fuzzer")
+    if not plugin: raise HTTPException(status_code=404)
+    return await plugin.fuzz_snmp(ip)
 
 # HID-BLE ELITE ENDPOINTS
 @app.get("/hid_ble/scan")
@@ -396,34 +408,78 @@ async def get_captured_credentials():
     if not plugin: raise HTTPException(status_code=404, detail="Sniffer plugin not found")
     return {"credentials": plugin.credentials}
 
+class SnifferStartBody(BaseModel):
+    iface: Optional[str] = None
+
 @app.post("/sniffer/start")
-async def sniffer_start():
+async def sniffer_start(body: SnifferStartBody = SnifferStartBody()):
+    plugin = plugin_manager.get_plugin("Sniffer")
+    if plugin:
+        await plugin.start(iface=body.iface)
+        return {"status": "sniffer_active", "mode": "DPI", "iface": body.iface or "default"}
     return cap_engine.run_command("net.sniff on")
 
 @app.post("/sniffer/stop")
 async def sniffer_stop():
+    plugin = plugin_manager.get_plugin("Sniffer")
+    if plugin:
+        await plugin.stop()
+        return {"status": "sniffer_stopped"}
     return cap_engine.run_command("net.sniff off")
 
 # PROXY ELITE ENDPOINTS
+class ProxyStartBody(BaseModel):
+    port: int = 8080
+    script: Optional[str] = None
+
 @app.post("/proxy/start")
-async def proxy_start():
+async def proxy_start(body: ProxyStartBody = ProxyStartBody()):
+    plugin = plugin_manager.get_plugin("Proxy")
+    if plugin:
+        await plugin.start(port=body.port, script=body.script)
+        return {"status": "proxy_active", "port": body.port,
+                "ca_cert": getattr(plugin, "_ca_cert", None)}
     return cap_engine.run_command("http.proxy on")
 
 @app.post("/proxy/stop")
 async def proxy_stop():
+    plugin = plugin_manager.get_plugin("Proxy")
+    if plugin:
+        await plugin.stop()
+        return {"status": "proxy_stopped"}
     return cap_engine.run_command("http.proxy off")
 
 # (removed legacy GET /cyber_strike/start — POST /cyber_strike/start is the canonical route)
 
 # SPOOFER ELITE ENDPOINTS
+class SpooferStartBody(BaseModel):
+    targets: Optional[list[str]] = None
+    gateway: Optional[str] = None
+    dns_table: Optional[dict] = None
+
 @app.post("/spoofer/start")
-async def spoofer_start(targets: list[str] = None):
-    if targets is not None:
-        cap_engine.run_command(f"set arp.spoof.targets {','.join(targets)}")
+async def spoofer_start(body: SpooferStartBody = SpooferStartBody()):
+    plugin = plugin_manager.get_plugin("Spoofer")
+    if plugin:
+        await plugin.start(
+            targets=body.targets,
+            gateway=body.gateway,
+            dns_table=body.dns_table,
+        )
+        return {"status": "spoofer_active",
+                "targets": body.targets,
+                "gateway": body.gateway}
+    # cap_engine fallback
+    if body.targets:
+        cap_engine.run_command(f"set arp.spoof.targets {','.join(body.targets)}")
     return cap_engine.run_command("arp.spoof on")
 
 @app.post("/spoofer/stop")
 async def spoofer_stop():
+    plugin = plugin_manager.get_plugin("Spoofer")
+    if plugin:
+        await plugin.stop()
+        return {"status": "spoofer_stopped"}
     return cap_engine.run_command("arp.spoof off")
 
 # WIFI ELITE ENDPOINTS
@@ -432,6 +488,326 @@ async def wifi_capture(bssid: str):
     p = plugin_manager.get_plugin("WiFi-Strike")
     if not p: raise HTTPException(status_code=404)
     return await p.capture_handshake(bssid)
+
+# ─── OPTION C: Automated deauth → capture → crack pipeline ───────────────────
+class AutoAttackBody(BaseModel):
+    bssid: str
+    clients: Optional[list[str]] = None
+    timeout: int = 90
+
+@app.post("/wifi/auto_attack")
+async def wifi_auto_attack(body: AutoAttackBody):
+    p = plugin_manager.get_plugin("WiFi-Strike")
+    if not p: raise HTTPException(status_code=404, detail="WiFi-Strike plugin not found")
+    asyncio.create_task(p.auto_attack(bssid=body.bssid, clients=body.clients, timeout=body.timeout))
+    return {"status": "auto_attack_launched", "bssid": body.bssid}
+
+# ─── OPTION A/B: Rogue AP (captive portal + transparent bridge) ───────────────
+class RogueAPBody(BaseModel):
+    ssid: str = "Free_WiFi"
+    channel: int = 6
+    iface_ap: str = "wlan0"
+    iface_wan: str = "eth0"
+    mode: str = "portal"
+    gw: str = "10.0.0.1"
+
+@app.post("/rogue_ap/start")
+async def rogue_ap_start(body: RogueAPBody):
+    p = plugin_manager.get_plugin("Rogue-AP")
+    if not p: raise HTTPException(status_code=404, detail="Rogue-AP plugin not found")
+    await p.start(**body.model_dump())
+    return {"status": "rogue_ap_active", "ssid": body.ssid, "mode": body.mode}
+
+@app.post("/rogue_ap/stop")
+async def rogue_ap_stop():
+    p = plugin_manager.get_plugin("Rogue-AP")
+    if not p: raise HTTPException(status_code=404)
+    await p.stop()
+    return {"status": "rogue_ap_stopped"}
+
+@app.get("/rogue_ap/creds")
+async def rogue_ap_creds():
+    p = plugin_manager.get_plugin("Rogue-AP")
+    if not p: raise HTTPException(status_code=404)
+    return {"creds": p.captured_creds}
+
+# ─── OPTION D: Rogue RADIUS (WPA-Enterprise MSCHAPv2 hash capture) ───────────
+class RogueRADIUSBody(BaseModel):
+    ssid: str = "CorpNet"
+    channel: int = 6
+    iface: str = "wlan0"
+    radius_port: int = 1812
+
+@app.post("/rogue_radius/start")
+async def rogue_radius_start(body: RogueRADIUSBody):
+    p = plugin_manager.get_plugin("Rogue-RADIUS")
+    if not p: raise HTTPException(status_code=404, detail="Rogue-RADIUS plugin not found")
+    await p.start(**body.model_dump())
+    return {"status": "rogue_radius_active", "ssid": body.ssid}
+
+@app.post("/rogue_radius/stop")
+async def rogue_radius_stop():
+    p = plugin_manager.get_plugin("Rogue-RADIUS")
+    if not p: raise HTTPException(status_code=404)
+    await p.stop()
+    return {"status": "rogue_radius_stopped"}
+
+@app.get("/rogue_radius/hashes")
+async def rogue_radius_hashes():
+    p = plugin_manager.get_plugin("Rogue-RADIUS")
+    if not p: raise HTTPException(status_code=404)
+    return {"hashes": p.captured}
+
+# ─── CRED SPRAY ──────────────────────────────────────────────────────
+class SprayBody(BaseModel):
+    target_ip: Optional[str] = None
+    credential: Optional[str] = None
+
+@app.post("/cred_spray/run")
+async def cred_spray_run(body: SprayBody):
+    plugin = plugin_manager.get_plugin("Cred-Spray")
+    if not plugin: raise HTTPException(status_code=404, detail="Cred-Spray not found")
+    if body.credential:
+        plugin.add_credential(body.credential)
+    if body.target_ip:
+        plugin.add_target(body.target_ip, [22, 21, 80, 443, 8080, 3306, 5432, 6379])
+    asyncio.create_task(plugin.run_spray())
+    return {"status": "spray_launched",
+            "credentials": len(plugin._credential_pool),
+            "targets": len(plugin._targets)}
+
+@app.get("/cred_spray/results")
+async def cred_spray_results():
+    plugin = plugin_manager.get_plugin("Cred-Spray")
+    if not plugin: raise HTTPException(status_code=404)
+    return {"results": plugin.results,
+            "pool_size": len(plugin._credential_pool),
+            "target_count": len(plugin._targets)}
+
+# ─── EXPLOIT MAPPER ───────────────────────────────────────────────────
+@app.post("/exploit_mapper/map")
+async def exploit_map(target: str = None):
+    plugin = plugin_manager.get_plugin("Exploit-Mapper")
+    vs     = plugin_manager.get_plugin("Vuln-Scanner")
+    if not plugin: raise HTTPException(status_code=404, detail="Exploit-Mapper not found")
+    ip = target or target_store.last_target
+    if not ip: raise HTTPException(status_code=400, detail="No target")
+    vuln_results = []
+    if vs:
+        vuln_results = await vs.scan_target(ip)
+        for v in vuln_results:
+            v["ip"] = ip
+    suggestions = plugin.map_cves(vuln_results)
+    return {"ip": ip, "suggestions": suggestions, "msf_commands": plugin.get_msf_commands(ip)}
+
+@app.get("/exploit_mapper/mappings")
+async def exploit_mappings():
+    plugin = plugin_manager.get_plugin("Exploit-Mapper")
+    if not plugin: raise HTTPException(status_code=404)
+    return {"mappings": plugin.mappings}
+
+# ─── WEB SCANNER ─────────────────────────────────────────────────────
+class WebScanBody(BaseModel):
+    host: str
+    port: int = 80
+    https: bool = False
+
+@app.post("/web_scanner/scan")
+async def web_scan(body: WebScanBody):
+    plugin = plugin_manager.get_plugin("Web-Scanner")
+    if not plugin: raise HTTPException(status_code=404, detail="Web-Scanner not found")
+    asyncio.create_task(plugin.scan(body.host, body.port, body.https))
+    return {"status": "scan_launched", "host": body.host, "port": body.port}
+
+@app.get("/web_scanner/findings")
+async def web_findings():
+    plugin = plugin_manager.get_plugin("Web-Scanner")
+    if not plugin: raise HTTPException(status_code=404)
+    return {"findings": plugin.findings}
+
+# ─── HASH CRACKER ────────────────────────────────────────────────────
+class CrackBody(BaseModel):
+    hash: Optional[str] = None
+    shadow_path: Optional[str] = None
+    pcap_path: Optional[str] = None
+    bssid: Optional[str] = ""
+
+@app.post("/hash_cracker/crack")
+async def hash_crack(body: CrackBody):
+    plugin = plugin_manager.get_plugin("Hash-Cracker")
+    if not plugin: raise HTTPException(status_code=404, detail="Hash-Cracker not found")
+    if body.hash:
+        asyncio.create_task(plugin.crack_hash(body.hash))
+    elif body.shadow_path:
+        asyncio.create_task(plugin.crack_shadow(body.shadow_path))
+    elif body.pcap_path:
+        asyncio.create_task(plugin.crack_pcap(body.pcap_path, body.bssid or ""))
+    else:
+        raise HTTPException(status_code=400, detail="Provide hash, shadow_path, or pcap_path")
+    return {"status": "crack_launched"}
+
+@app.get("/hash_cracker/results")
+async def hash_results():
+    plugin = plugin_manager.get_plugin("Hash-Cracker")
+    if not plugin: raise HTTPException(status_code=404)
+    return {"results": plugin.results}
+
+# ─── OSINT ENRICHER ──────────────────────────────────────────────────
+@app.get("/osint/enrich")
+async def osint_enrich(ip: str):
+    plugin = plugin_manager.get_plugin("OSINT-Enricher")
+    if not plugin: raise HTTPException(status_code=404, detail="OSINT-Enricher not found")
+    result = await plugin.enrich(ip)
+    return result
+
+@app.post("/osint/enrich_all")
+async def osint_enrich_all():
+    plugin = plugin_manager.get_plugin("OSINT-Enricher")
+    if not plugin: raise HTTPException(status_code=404)
+    asyncio.create_task(plugin.enrich_batch(target_store.devices))
+    return {"status": "enrichment_launched", "hosts": len(target_store.devices)}
+
+# ─── REPORT BUILDER ──────────────────────────────────────────────────
+@app.post("/report/generate")
+async def generate_report(campaign_id: str = None):
+    plugin = plugin_manager.get_plugin("Report-Builder")
+    if not plugin: raise HTTPException(status_code=404, detail="Report-Builder not found")
+    result = await plugin.generate(campaign_id)
+    return result
+
+@app.get("/report/{campaign_id}/html")
+async def get_report_html(campaign_id: str):
+    from fastapi.responses import FileResponse
+    plugin = plugin_manager.get_plugin("Report-Builder")
+    if not plugin: raise HTTPException(status_code=404)
+    result = await plugin.generate(campaign_id)
+    html_path = result.get("html_path")
+    if not html_path or not os.path.exists(html_path):
+        raise HTTPException(status_code=500, detail="Report generation failed")
+    return FileResponse(html_path, media_type="text/html")
+
+# ─── WIFI FINGERPRINTER ──────────────────────────────────────────
+class FingerprintBody(BaseModel):
+    bssid: str
+    timeout: int = 35
+
+@app.post("/wifi_fingerprint/start")
+async def wifi_fp_start(iface: str = "wlan0"):
+    p = plugin_manager.get_plugin("WiFi-Fingerprinter")
+    if not p: raise HTTPException(status_code=404, detail="WiFi-Fingerprinter not found")
+    await p.start(interface=iface)
+    return {"status": "ready"}
+
+@app.post("/wifi_fingerprint/fingerprint")
+async def wifi_fp_run(body: FingerprintBody):
+    p = plugin_manager.get_plugin("WiFi-Fingerprinter")
+    if not p: raise HTTPException(status_code=404, detail="WiFi-Fingerprinter not found")
+    asyncio.create_task(p.fingerprint_ap(body.bssid, body.timeout))
+    return {"status": "fingerprinting", "bssid": body.bssid}
+
+@app.get("/wifi_fingerprint/profiles")
+async def wifi_fp_profiles():
+    p = plugin_manager.get_plugin("WiFi-Fingerprinter")
+    if not p: raise HTTPException(status_code=404)
+    return await p.get_profiles()
+
+# ─── IDENTITY CORRELATOR ─────────────────────────────────────────
+@app.post("/identity/correlate")
+async def identity_correlate():
+    p = plugin_manager.get_plugin("Identity-Correlator")
+    if not p: raise HTTPException(status_code=404, detail="Identity-Correlator not found")
+    return await p.correlate()
+
+@app.get("/identity/profiles")
+async def identity_profiles():
+    p = plugin_manager.get_plugin("Identity-Correlator")
+    if not p: raise HTTPException(status_code=404)
+    return await p.get_identities()
+
+# ─── CRED GENOME ─────────────────────────────────────────────────
+@app.post("/cred_genome/analyze")
+async def genome_analyze():
+    p = plugin_manager.get_plugin("Cred-Genome")
+    if not p: raise HTTPException(status_code=404, detail="Cred-Genome not found")
+    return await p.analyze()
+
+class GenomeGenerateBody(BaseModel):
+    count: int = 100
+
+@app.post("/cred_genome/generate")
+async def genome_generate(body: GenomeGenerateBody):
+    p = plugin_manager.get_plugin("Cred-Genome")
+    if not p: raise HTTPException(status_code=404, detail="Cred-Genome not found")
+    return await p.generate(body.count)
+
+# ─── BASELINE CALIBRATOR ─────────────────────────────────────────
+class BaselineBody(BaseModel):
+    interface: Optional[str] = None
+    observe_secs: int = 60
+
+@app.post("/baseline/start")
+async def baseline_start(body: BaselineBody):
+    p = plugin_manager.get_plugin("Baseline-Calibrator")
+    if not p: raise HTTPException(status_code=404, detail="Baseline-Calibrator not found")
+    await p.start(interface=body.interface, observe_secs=body.observe_secs)
+    return {"status": "observing", "observe_secs": body.observe_secs}
+
+@app.get("/baseline/status")
+async def baseline_status():
+    p = plugin_manager.get_plugin("Baseline-Calibrator")
+    if not p: raise HTTPException(status_code=404)
+    return await p.get_status()
+
+# ─── MESH INJECTOR ───────────────────────────────────────────────
+class MeshStartBody(BaseModel):
+    mesh_id: str = ""
+    channel: int = 6
+    iface: str = "wlan0"
+    iface_wan: str = "eth0"
+    scan_first: bool = True
+
+@app.post("/mesh/start")
+async def mesh_start(body: MeshStartBody):
+    p = plugin_manager.get_plugin("Mesh-Injector")
+    if not p: raise HTTPException(status_code=404, detail="Mesh-Injector not found")
+    asyncio.create_task(p.start(**body.model_dump()))
+    return {"status": "mesh_injection_starting", "mesh_id": body.mesh_id}
+
+@app.post("/mesh/stop")
+async def mesh_stop():
+    p = plugin_manager.get_plugin("Mesh-Injector")
+    if not p: raise HTTPException(status_code=404)
+    await p.stop()
+    return {"status": "mesh_stopped"}
+
+@app.post("/mesh/scan")
+async def mesh_scan(iface: str = "wlan0", timeout: int = 12):
+    p = plugin_manager.get_plugin("Mesh-Injector")
+    if not p: raise HTTPException(status_code=404)
+    meshes = await asyncio.to_thread(p._passive_scan, timeout)
+    return {"meshes": meshes}
+
+@app.get("/mesh/status")
+async def mesh_status():
+    p = plugin_manager.get_plugin("Mesh-Injector")
+    if not p: raise HTTPException(status_code=404)
+    return await p.get_status()
+
+# ─── PIPELINE ENGINE ─────────────────────────────────────────────────
+class PipelineRuleBody(BaseModel):
+    rule: str
+    enabled: bool
+
+@app.get("/pipeline/status")
+async def pipeline_status():
+    return pipeline_engine.get_status()
+
+@app.post("/pipeline/rule")
+async def pipeline_set_rule(body: PipelineRuleBody):
+    ok = pipeline_engine.set_rule(body.rule, body.enabled)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Rule '{body.rule}' not found")
+    return {"rule": body.rule, "enabled": body.enabled}
 
 @app.websocket("/ws/recon")
 async def recon_websocket(websocket: WebSocket):
