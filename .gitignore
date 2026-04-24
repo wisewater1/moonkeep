@@ -14,3 +14,7 @@ logs/
 frontend/node_modules/
 backend/venv/
 *.mjs
+
+# Vite dev-server cache dropped in CWD
+.vite/
+frontend/.vite/
