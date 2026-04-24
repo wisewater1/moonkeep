@@ -172,6 +172,8 @@ const Dashboard = () => {
   const [cmdQuery, setCmdQuery]         = useState('');
   const [splitPanel, setSplitPanel]     = useState(null);
   const [logDrawerOpen, setLogDrawerOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const pickPlugin = (name) => { setActivePlugin(name); setMobileNavOpen(false); };
   const [redOpsMode, setRedOpsMode]     = useState(() => localStorage.getItem('moonkeep_red_ops') === '1');
   const [favPlugins, setFavPlugins]     = useState(() => { try { return JSON.parse(localStorage.getItem('moonkeep_favs') || '[]'); } catch { return []; } });
   const [pluginFindings, setPluginFindings] = useState({});
@@ -1665,7 +1667,11 @@ const Dashboard = () => {
 
   return (
     <div className="dashboard-container">
-      <aside className="sidebar">
+      <div
+        className={`mobile-drawer-backdrop${mobileNavOpen ? ' mobile-open' : ''}`}
+        onClick={() => setMobileNavOpen(false)}
+      />
+      <aside className={`sidebar${mobileNavOpen ? ' mobile-open' : ''}`}>
         {/* Logo + Ctrl+K hint */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -1690,7 +1696,7 @@ const Dashboard = () => {
                 return (
                   <button key={name} className={`btn-primary nav-btn ${activePlugin === name ? 'active' : ''}`}
                     style={{ marginBottom: '0.15rem', paddingLeft: '0.6rem', justifyContent: 'space-between' }}
-                    onClick={() => setActivePlugin(name)}>
+                    onClick={() => pickPlugin(name)}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#f59e0b', flexShrink: 0 }} />
                       {name.toUpperCase()}
@@ -1724,7 +1730,7 @@ const Dashboard = () => {
                       <button
                         className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
                         style={{ flex: 1, marginBottom: '0.15rem', paddingLeft: '0.6rem', justifyContent: 'space-between' }}
-                        onClick={() => setActivePlugin(p.name)}
+                        onClick={() => pickPlugin(p.name)}
                       >
                         <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                           <span style={{
@@ -1748,7 +1754,7 @@ const Dashboard = () => {
           })}
           {plugins.filter(p => !Object.values(PLUGIN_CATEGORIES).flat().includes(p.name)).map(p => (
             <button key={p.name} className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
-              style={{ marginBottom: '0.15rem' }} onClick={() => setActivePlugin(p.name)}>
+              style={{ marginBottom: '0.15rem' }} onClick={() => pickPlugin(p.name)}>
               {p.name.toUpperCase()}
             </button>
           ))}
@@ -1787,9 +1793,18 @@ const Dashboard = () => {
 
       <main className="main-content">
         <header className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1.5rem', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <div style={{ minWidth: 0 }}>
-            <h2 className="accent-text" style={{ fontSize: '1.1rem', whiteSpace: 'nowrap' }}>{activePlugin || "COMMANDER"}</h2>
-            <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Operational Surface Matrix</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0 }}>
+            <button
+              className="mobile-menu-btn"
+              aria-label="Open navigation"
+              onClick={() => setMobileNavOpen(o => !o)}
+            >
+              ☰
+            </button>
+            <div style={{ minWidth: 0 }}>
+              <h2 className="accent-text" style={{ fontSize: '1.1rem', whiteSpace: 'nowrap' }}>{activePlugin || "COMMANDER"}</h2>
+              <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Operational Surface Matrix</p>
+            </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', borderLeft: '1px solid rgba(167,139,250,0.2)', borderRight: '1px solid rgba(167,139,250,0.2)', padding: '0 1rem' }}>
@@ -1919,6 +1934,7 @@ const Dashboard = () => {
 
             <CapTerminal bcapStatus={bcapStatus} setStrikeLog={setStrikeLog} />
 
+            <div style={{ display: 'flex', flexDirection: 'column', background: '#000', border: '1px solid rgba(167,139,250,0.15)', borderRadius: '6px', overflow: 'hidden' }}>
               {/* Terminal Output */}
               <div
                 ref={cliRef}
