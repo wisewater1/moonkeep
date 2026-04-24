@@ -24,6 +24,17 @@
   scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
 }
 
+/* Momentum scrolling + overscroll containment for any scrollable surface */
+nav,
+.main-content,
+.log-drawer,
+.glass-card,
+[style*="overflowY"],
+[style*="overflow-y"] {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
 body {
   background-color: var(--bg-color);
   background-image:
@@ -569,12 +580,36 @@ tbody tr:hover {
   }
 }
 
-/* Very small (iPhone SE / mini) — tighten further */
+/* Very small (iPhone SE / mini, Pixel 4a, Galaxy S9) — tighten further */
 @media (max-width: 420px) {
   h1.accent-text { font-size: 1.3rem !important; }
   h2.accent-text { font-size: 0.95rem !important; }
   .glass-card { padding: 0.7rem; }
   .main-content > header.glass-card { padding: 0.4rem 0.55rem !important; }
+}
+
+/* Landscape phones (iPhone Pro Max rotated, Pixel 8 rotated) — keep the
+   drawer behavior but let the content fill horizontally. */
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+  .dashboard-container { padding: 0.35rem; }
+  .glass-card { padding: 0.6rem; }
+  .main-content > header.glass-card { padding: 0.3rem 0.6rem !important; }
+  .log-drawer { height: 110px; }
+}
+
+/* Tablets (iPad mini, Galaxy Tab, Pixel Tablet) — keep the desktop
+   layout but a little tighter; do not collapse the sidebar. */
+@media (min-width: 861px) and (max-width: 1100px) {
+  .sidebar { width: 220px; padding: 1.25rem 0.7rem; }
+  .main-content > div > div:first-child {
+    grid-template-columns: 1fr 340px !important;
+  }
+}
+
+/* Install prompt: prefer the PWA app icon when installed on Android. */
+@media (display-mode: standalone) {
+  body { user-select: none; }
+  .dashboard-container { padding-top: max(0.5rem, env(safe-area-inset-top)); }
 }
 
 /* ── Bottom Log Drawer ──────────────────────────────────── */

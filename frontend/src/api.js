@@ -1,5 +1,8 @@
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
-export const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8001';
+// Share the same runtime-resolved bases as config.js so a localStorage
+// override (used by the mobile Settings panel) applies everywhere.
+import { API_BASE, WS_BASE } from './config.js';
+export const API_URL = API_BASE;
+export const WS_URL = WS_BASE;
 
 export function makeApiCall(setStrikeLog) {
   return async function apiCall(endpoint, method = 'GET', body = null) {

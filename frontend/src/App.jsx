@@ -3,7 +3,7 @@ import { Terminal } from 'xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import 'xterm/css/xterm.css';
 import './index.css';
-import { API_BASE, WS_BASE } from './config.js';
+import { API_BASE, WS_BASE, setApiBase, setWsBase } from './config.js';
 import { AuthProvider, useAuth } from './hooks/useAuth.js';
 import LoginScreen from './components/LoginScreen.jsx';
 import ModulePanel from './components/ModulePanel.jsx';
@@ -31,7 +31,7 @@ const ReconTerminal = () => {
     term.open(terminalRef.current);
     setTimeout(() => fitAddon.fit(), 50);
 
-    const ws = new WebSocket((import.meta.env.VITE_WS_URL || 'ws://localhost:8001') + '/ws/recon');
+    const ws = new WebSocket(WS_BASE + '/ws/recon');
     wsRef.current = ws;
 
     ws.onmessage = async (e) => {
@@ -255,18 +255,18 @@ const Dashboard = () => {
 
     const boot = async () => {
       try {
-        const res = await fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/plugins');
+        const res = await fetch(API_BASE + '/plugins');
         const data = await res.json();
         setPlugins([...data, { name: 'Recon-Console' }]);
         const savedPlugin = localStorage.getItem('moonkeep_plugin');
         if (!savedPlugin && data.length > 0) setActivePlugin(data[0].name);
 
-        const campRes = await fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/campaigns');
+        const campRes = await fetch(API_BASE + '/campaigns');
         const campData = await campRes.json();
         setCampaigns(campData);
 
         // Hydrate targets from backend store
-        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/scan').then(r => r.json()).then(d => {
+        fetch(API_BASE + '/scan').then(r => r.json()).then(d => {
           if (d.devices && d.devices.length > 0) {
             setDevices(d.devices);
             setActiveTarget(d.devices[0]);
@@ -278,7 +278,7 @@ const Dashboard = () => {
     };
     boot();
 
-    ws.current = new WebSocket((import.meta.env.VITE_WS_URL || 'ws://localhost:8001') + '/ws');
+    ws.current = new WebSocket(WS_BASE + '/ws');
     ws.current.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
@@ -328,28 +328,28 @@ const Dashboard = () => {
     if (!activePlugin) return;
     const poll = setInterval(() => {
       if (activePlugin === "AI-Orchestrator") {
-        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/graph').then(r => r.json()).then(setGraphData).catch(() => { });
+        fetch(API_BASE + '/graph').then(r => r.json()).then(setGraphData).catch(() => { });
       }
       if (activePlugin === "Sniffer") {
-        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/sniffer/credentials').then(r => r.json()).then(d => setCapturedCreds(d.credentials || [])).catch(() => { });
+        fetch(API_BASE + '/sniffer/credentials').then(r => r.json()).then(d => setCapturedCreds(d.credentials || [])).catch(() => { });
       }
       if (activePlugin === "Cred-Spray") {
-        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/cred_spray/results').then(r => r.json()).then(d => setCredSprayResults(d.results || [])).catch(() => { });
+        fetch(API_BASE + '/cred_spray/results').then(r => r.json()).then(d => setCredSprayResults(d.results || [])).catch(() => { });
       }
       if ((activePlugin === "WiFi-Strike" || activePlugin === "Wardriver") && rogueAPActive) {
-        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/rogue_ap/creds').then(r => r.json()).then(d => setRogueAPCreds(d.creds || [])).catch(() => { });
+        fetch(API_BASE + '/rogue_ap/creds').then(r => r.json()).then(d => setRogueAPCreds(d.creds || [])).catch(() => { });
       }
       if ((activePlugin === "WiFi-Strike" || activePlugin === "Wardriver") && rogueRADIUSActive) {
-        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/rogue_radius/hashes').then(r => r.json()).then(d => setRogueRADIUSHashes(d.hashes || [])).catch(() => { });
+        fetch(API_BASE + '/rogue_radius/hashes').then(r => r.json()).then(d => setRogueRADIUSHashes(d.hashes || [])).catch(() => { });
       }
       if (activePlugin === "WiFi-Fingerprinter") {
-        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/wifi_fingerprint/profiles').then(r => r.json()).then(d => setFpProfiles(d.profiles || [])).catch(() => { });
+        fetch(API_BASE + '/wifi_fingerprint/profiles').then(r => r.json()).then(d => setFpProfiles(d.profiles || [])).catch(() => { });
       }
       if (activePlugin === "Baseline-Calibrator" && baselineActive) {
-        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/baseline/status').then(r => r.json()).then(d => { if (d.baseline && d.baseline.arp_per_min !== undefined) setBaselineData(d.baseline); }).catch(() => { });
+        fetch(API_BASE + '/baseline/status').then(r => r.json()).then(d => { if (d.baseline && d.baseline.arp_per_min !== undefined) setBaselineData(d.baseline); }).catch(() => { });
       }
       if (activePlugin === "Mesh-Injector" && meshActive) {
-        fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/mesh/status').then(r => r.json()).then(d => setMeshStatus(d)).catch(() => { });
+        fetch(API_BASE + '/mesh/status').then(r => r.json()).then(d => setMeshStatus(d)).catch(() => { });
       }
     }, 4000);
     return () => clearInterval(poll);
@@ -364,10 +364,10 @@ const Dashboard = () => {
 
   useEffect(() => {
     const pollBcap = setInterval(() => {
-      fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
+      fetch(API_BASE + '/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
     }, 5000);
     // Initial check
-    fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
+    fetch(API_BASE + '/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
     return () => clearInterval(pollBcap);
   }, [authFetch]);
 
@@ -382,7 +382,7 @@ const Dashboard = () => {
     setCliOutput(prev => [...prev, { text: `❯ ${cmd}`, color: '#a78bfa', bold: true }]);
     setStrikeLog(prev => [...prev.slice(-40), `[cap] > ${cmd}`]);
     try {
-      const res = await fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/bettercap/command', {
+      const res = await fetch(API_BASE + '/bettercap/command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cmd })
@@ -423,7 +423,7 @@ const Dashboard = () => {
         options.headers = { 'Content-Type': 'application/json' };
         options.body = JSON.stringify(body);
       }
-      const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:8001"}${endpoint}`, options);
+      const res = await fetch(`${API_BASE}${endpoint}`, options);
       const data = await res.json();
       setStrikeLog(prev => [...prev.slice(-40), `[<] SUCCESS: ${endpoint}`, `[#] DATA: ${JSON.stringify(data).slice(0, 100)}...`]);
       return data;
@@ -435,7 +435,7 @@ const Dashboard = () => {
 
   const handleExportReport = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:8001"}/campaigns/${activeCampaign}/report`);
+      const res = await fetch(`${API_BASE}/campaigns/${activeCampaign}/report`);
       const data = await res.json();
       if (data.report) {
         const blob = new Blob([data.report], { type: 'text/markdown' });
@@ -1264,7 +1264,7 @@ const Dashboard = () => {
               <button className="btn-primary" onClick={async () => {
                 const r = await apiCall('/report/generate', 'POST', { campaign_id: activeCampaign });
                 if (r?.report_id || r?.status) {
-                  setReportHTML(`${import.meta.env.VITE_API_URL || "http://localhost:8001"}/report/${activeCampaign}/html`);
+                  setReportHTML(`${API_BASE}/report/${activeCampaign}/html`);
                 }
               }}>GENERATE REPORT</button>
               {reportHTML && (
@@ -1782,7 +1782,31 @@ const Dashboard = () => {
               {redOpsMode ? '◉ RED' : '○ DRK'}
             </button>
             <div style={{ textAlign: 'right' }}>
-              <span style={{ fontSize: '0.65rem', color: 'var(--neo-cyan)', fontWeight: 700 }}>:8001</span>
+              <button
+                type="button"
+                title="Tap to point this app at a different backend (Tailscale / Cloudflare Tunnel / LAN IP). Blank = same origin."
+                onClick={() => {
+                  const current = API_BASE || '';
+                  const next = window.prompt(
+                    'Backend URL (leave blank = same origin):\n' +
+                    'e.g. https://moonkeep.mytunnel.ts.net',
+                    current
+                  );
+                  if (next === null) return;
+                  const trimmed = next.trim().replace(/\/+$/, '');
+                  setApiBase(trimmed);
+                  if (trimmed.startsWith('https://'))      setWsBase('wss://' + trimmed.slice(8));
+                  else if (trimmed.startsWith('http://'))  setWsBase('ws://' + trimmed.slice(7));
+                  else                                     setWsBase('');
+                  window.location.reload();
+                }}
+                style={{
+                  background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
+                  fontSize: '0.65rem', color: 'var(--neo-cyan)', fontWeight: 700,
+                  fontFamily: 'Fira Code, monospace',
+                }}>
+                {API_BASE ? (API_BASE.replace(/^https?:\/\//, '').slice(0, 22) || 'same origin') : 'same origin'}
+              </button>
               {bcapStatus.active_modules?.length > 0 && (
                 <div style={{ fontSize: '0.5rem', color: '#f59e0b', marginTop: '0.1rem' }}>{bcapStatus.active_modules.length} active</div>
               )}
