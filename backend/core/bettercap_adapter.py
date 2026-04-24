@@ -8,10 +8,8 @@ import asyncio
 import threading
 import time
 import socket
-import struct
 import subprocess
 import platform
-import re
 import os
 
 
@@ -338,12 +336,27 @@ class NativeCapEngine:
     #  SHELL EXECUTION
     # ══════════════════════════════════════════════════════════════
 
+    SHELL_ALLOWLIST = {
+        "ip", "ifconfig", "iwconfig", "iw", "arp", "ping", "traceroute",
+        "nslookup", "dig", "host", "netstat", "ss", "whoami", "hostname",
+        "uname", "cat", "ls", "ps", "df", "free", "uptime", "date", "id",
+        "route", "nmap", "curl", "wget",
+    }
+
     def _exec_shell(self, shell_cmd: str) -> dict:
         if not shell_cmd:
             return {"status": "error", "output": "Usage: ! <shell command>"}
+        base_cmd = shell_cmd.split()[0]
+        if base_cmd not in self.SHELL_ALLOWLIST:
+            return {"status": "error", "output": f"Blocked: '{base_cmd}' not in allowlist. Allowed: {', '.join(sorted(self.SHELL_ALLOWLIST))}"}
+        import shlex
+        try:
+            args = shlex.split(shell_cmd)
+        except ValueError as e:
+            return {"status": "error", "output": f"Parse error: {e}"}
         try:
             result = subprocess.run(
-                shell_cmd, shell=True, capture_output=True, text=True, timeout=15
+                args, capture_output=True, text=True, timeout=15
             )
             output = (result.stdout + result.stderr).strip()
             return {"status": "ok", "output": output or "(no output)"}
@@ -585,7 +598,9 @@ class NativeCapEngine:
         lines = [f"{'SSID':22s} {'BSSID':18s} {'RSSI':6s} {'CH':4s} {'ENC':10s}",
                  "─" * 62]
         for n in self.target_store.networks:
-            lines.append(f"{n.get('ssid', 'HIDDEN'):22s} {n.get('mac', '?'):18s} {str(n.get('rssi', '?')):6s} {str(n.get('channel', '?')):4s} {n.get('encryption', '?'):10s}")
+            bssid = n.get('bssid') or n.get('mac') or '?'
+            signal = n.get('rssi') or n.get('signal') or '?'
+            lines.append(f"{n.get('ssid', 'HIDDEN'):22s} {bssid:18s} {str(signal):6s} {str(n.get('channel', '?')):4s} {n.get('encryption', '?'):10s}")
         return {"status": "ok", "output": "\n".join(lines)}
 
     # ══════════════════════════════════════════════════════════════
@@ -755,14 +770,17 @@ class NativeCapEngine:
 
     def _handle_ble_recon(self, parts) -> dict:
         action = parts[1] if len(parts) > 1 else "on"
-        ble = self.plugin_manager.get_plugin("HID-BLE") if self.plugin_manager else None
+        ble = self.plugin_manager.get_plugin("HID-BLE-Strike") if self.plugin_manager else None
         if action == "on":
             self.active_modules.add("ble.recon")
             self._log("BLE recon started — scanning for Bluetooth LE devices...")
             if ble:
                 def _scan():
                     try:
-                        devices = ble.scan()
+                        import asyncio as _aio
+                        _loop = _aio.new_event_loop()
+                        devices = _loop.run_until_complete(ble.scan_ble())
+                        _loop.close()
                         self._log(f"BLE: {len(devices)} devices found")
                         for d in devices:
                             self._log(f"  → {d.get('name', '?')} [{d.get('mac', '?')}] RSSI: {d.get('rssi', '?')}")
@@ -781,7 +799,7 @@ class NativeCapEngine:
 
     def _handle_hid(self, parts) -> dict:
         action = parts[1] if len(parts) > 1 else "show"
-        ble = self.plugin_manager.get_plugin("HID-BLE") if self.plugin_manager else None
+        ble = self.plugin_manager.get_plugin("HID-BLE-Strike") if self.plugin_manager else None
         if action == "on":
             self.active_modules.add("hid")
             self._log("HID injection module active")

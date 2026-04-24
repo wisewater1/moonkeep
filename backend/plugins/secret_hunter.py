@@ -2,6 +2,8 @@ from core.plugin_manager import BasePlugin
 import math
 import os
 import re
+import math
+from datetime import datetime
 
 
 class SecretHunterPlugin(BasePlugin):
@@ -35,11 +37,31 @@ class SecretHunterPlugin(BasePlugin):
     def description(self) -> str:
         return "Zero-Mock Repository Secret Discovery"
 
+    @property
+    def version(self) -> str:
+        return "1.5.0"
+
+    @property
+    def category(self) -> str:
+        return "recon"
+
     async def start(self):
-        print("Secret Hunter: Initializing entropy engines.")
+        self.emit("INFO", {"msg": "Secret Hunter initialized with 30+ detection patterns"})
 
     async def stop(self):
-        print("Secret Hunter: Suspending engines.")
+        pass
+
+    def _entropy(self, s):
+        """Calculate Shannon entropy of a string — high entropy = likely secret."""
+        if not s:
+            return 0
+        prob = [float(s.count(c)) / len(s) for c in set(s)]
+        return -sum(p * math.log2(p) for p in prob)
+
+    def _read_file(self, path):
+        """Synchronous file read helper — called via asyncio.to_thread()."""
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            return f.read()
 
     @staticmethod
     def _shannon_entropy(s: str) -> float:
@@ -68,7 +90,7 @@ class SecretHunterPlugin(BasePlugin):
         return round(min(1.0, (entropy - threshold) / span), 4)
 
     async def hunt(self, target_path=".."):
-        """Perform deep scan on project workspace."""
+        """Deep filesystem scan for exposed secrets, API keys, tokens, and credentials."""
         findings = []
         abs_target = os.path.abspath(target_path)
         print(f"Secret Hunter: Scanning {abs_target}")

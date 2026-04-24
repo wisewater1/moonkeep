@@ -53,6 +53,14 @@ class AIOrchestratorPlugin(BasePlugin):
     def description(self) -> str:
         return "Autonomous Neural Security Engine"
 
+    @property
+    def version(self) -> str:
+        return "2.2.0"
+
+    @property
+    def category(self) -> str:
+        return "ai"
+
     async def start(self):
         self.running = True
         print("AI-Orchestrator: Thinking engine online. Knowledge graph synchronized.")

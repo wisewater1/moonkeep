@@ -6,6 +6,7 @@ import subprocess
 import re
 import os
 import time
+from datetime import datetime
 
 
 class WiFiAttackPlugin(BasePlugin):
@@ -26,6 +27,14 @@ class WiFiAttackPlugin(BasePlugin):
     def description(self) -> str:
         return "Tactical Deauth & Handshake Capture"
 
+    @property
+    def version(self) -> str:
+        return "2.0.0"
+
+    @property
+    def category(self) -> str:
+        return "wireless"
+
     async def start(self, interface=None):
         if interface:
             self.interface = interface
@@ -44,7 +53,9 @@ class WiFiAttackPlugin(BasePlugin):
 
     async def stop(self):
         self.running = False
-        print("WiFi-Strike: Ceasing all wireless operations.")
+        for t in self.threads:
+            t.join(timeout=2)
+        self.threads.clear()
 
     async def deauth(self, target_mac=None, ap_mac=None, count=100):
         if not target_mac and self.target_store and self.target_store.devices:
@@ -63,6 +74,7 @@ class WiFiAttackPlugin(BasePlugin):
             return {"status": "frame construction failed", "error": str(exc)}
 
         def run_deauth():
+            sent = 0
             try:
                 for i in range(count):
                     if not self.running:

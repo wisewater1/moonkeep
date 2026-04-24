@@ -10,6 +10,7 @@ class BasePlugin(ABC):
     event_queue: Optional[asyncio.Queue] = None
     target_store: Optional[Any] = None
     bettercap: Optional[Any] = None
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -19,6 +20,18 @@ class BasePlugin(ABC):
     @abstractmethod
     def description(self) -> str:
         ...
+
+    @property
+    def version(self) -> str:
+        return "1.0.0"
+
+    @property
+    def author(self) -> str:
+        return "Moonkeep Core"
+
+    @property
+    def category(self) -> str:
+        return "general"
 
     @abstractmethod
     async def start(self):
@@ -46,7 +59,12 @@ class BasePlugin(ABC):
     def log_event(self, msg: str, type: str = "INFO"):
         """Pipe operational logs to the global event system."""
         if hasattr(self, 'event_queue') and self.event_queue:
-            self.event_queue.put_nowait({"type": type, "msg": f"[{self.name}] {msg}"})
+            payload = {"type": type, "msg": f"[{self.name}] {msg}"}
+            try:
+                loop = asyncio.get_running_loop()
+                loop.call_soon_threadsafe(self.event_queue.put_nowait, payload)
+            except RuntimeError:
+                pass
         print(f"[{self.name}] {msg}")
 
 class PluginManager:
@@ -79,4 +97,13 @@ class PluginManager:
         return self.plugins.get(name)
 
     def list_plugins(self):
-        return [{"name": p.name, "description": p.description} for p in self.plugins.values()]
+        return [
+            {
+                "name": p.name,
+                "description": p.description,
+                "version": p.version,
+                "author": p.author,
+                "category": p.category,
+            }
+            for p in self.plugins.values()
+        ]

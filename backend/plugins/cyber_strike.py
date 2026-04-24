@@ -1,5 +1,6 @@
 from core.plugin_manager import BasePlugin
 import asyncio
+import time
 
 
 class CyberStrikePlugin(BasePlugin):
@@ -29,6 +30,7 @@ class CyberStrikePlugin(BasePlugin):
         self.active_role = None
         self.status = "IDLE"
         self.log = []
+        self._running = False
 
     @property
     def name(self) -> str:
@@ -37,6 +39,14 @@ class CyberStrikePlugin(BasePlugin):
     @property
     def description(self) -> str:
         return "Autonomous Role-Based Strike Engine"
+
+    @property
+    def version(self) -> str:
+        return "2.1.0"
+
+    @property
+    def category(self) -> str:
+        return "orchestration"
 
     async def start(self, role="Shadow", plugin_manager=None):
         self.active_role = role
@@ -227,6 +237,7 @@ class CyberStrikePlugin(BasePlugin):
         print(f"Cyber Strike complete: {self.status}")
 
     async def stop(self):
+        self._running = False
         self.status = "IDLE"
         self.active_role = None
         self.log.append("Protocol terminated.")

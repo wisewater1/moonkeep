@@ -28,6 +28,14 @@ class HIDBLEPlugin(BasePlugin):
     def description(self) -> str:
         return "Tactical BLE Recon & HID MouseJacking"
 
+    @property
+    def version(self) -> str:
+        return "1.5.0"
+
+    @property
+    def category(self) -> str:
+        return "wireless"
+
     async def start(self):
         self.running = True
 

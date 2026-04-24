@@ -88,6 +88,7 @@ class VulnScannerPlugin(BasePlugin):
                 "banner_re": None, "affected_re": None,
             },
         }
+        self.results = []
 
     @property
     def name(self) -> str:
@@ -97,11 +98,20 @@ class VulnScannerPlugin(BasePlugin):
     def description(self) -> str:
         return "Deep Vulnerability & CVE Assessment"
 
+    @property
+    def version(self) -> str:
+        return "2.0.0"
+
+    @property
+    def category(self) -> str:
+        return "recon"
+
     async def start(self):
-        print("Vuln Scanner initialized.")
+        self.results = []
+        self.emit("INFO", {"msg": "Vulnerability scanner initialized with extended CVE database"})
 
     async def stop(self):
-        print("Vuln Scanner suspended.")
+        pass
 
     @staticmethod
     def _cvss_to_severity(cvss: float) -> str:

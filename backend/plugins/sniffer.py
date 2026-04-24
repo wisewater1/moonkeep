@@ -2,6 +2,8 @@ from core.plugin_manager import BasePlugin
 from scapy.all import AsyncSniffer, IP, TCP, UDP, Raw
 import base64
 import re
+import base64
+from datetime import datetime
 
 
 class SnifferPlugin(BasePlugin):
@@ -28,7 +30,7 @@ class SnifferPlugin(BasePlugin):
     async def stop(self):
         if self.sniffer:
             self.sniffer.stop()
-            print("Sniffer: Harvesting engine SUSPENDED.")
+            self.emit("INFO", {"msg": f"Sniffer stopped. Captured {len(self.credentials)} credentials, {self.packet_count} packets"})
 
     # ------------------------------------------------------------------
     # Packet router

@@ -3,11 +3,19 @@ import { Terminal } from 'xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import 'xterm/css/xterm.css';
 import './index.css';
+import { API_BASE, WS_BASE } from './config.js';
+import { AuthProvider, useAuth } from './hooks/useAuth.js';
+import LoginScreen from './components/LoginScreen.jsx';
+import ModulePanel from './components/ModulePanel.jsx';
+import CapTerminal from './components/CapTerminal.jsx';
+import TacticalFeed from './components/TacticalFeed.jsx';
+import MetricsDashboard from './components/MetricsDashboard.jsx';
 
 const ReconTerminal = () => {
   const terminalRef = useRef(null);
   const xtermRef = useRef(null);
   const wsRef = useRef(null);
+  const { token } = useAuth();
 
   useEffect(() => {
     const term = new Terminal({
@@ -21,7 +29,6 @@ const ReconTerminal = () => {
 
     xtermRef.current = term;
     term.open(terminalRef.current);
-    // Slight delay to ensure DOM is ready before fitting
     setTimeout(() => fitAddon.fit(), 50);
 
     const ws = new WebSocket((import.meta.env.VITE_WS_URL || 'ws://localhost:8001') + '/ws/recon');
@@ -50,7 +57,7 @@ const ReconTerminal = () => {
       ws.close();
       term.dispose();
     };
-  }, []);
+  }, [token]);
 
   return (
     <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -64,6 +71,8 @@ const ReconTerminal = () => {
 };
 
 const Dashboard = () => {
+  const { authFetch, user, logout, token } = useAuth();
+
   const [plugins, setPlugins] = useState([]);
   const [activePlugin, setActivePlugin] = useState("");
   const [devices, setDevices] = useState([]);
@@ -78,7 +87,6 @@ const Dashboard = () => {
   const [campaigns, setCampaigns] = useState([]);
   const [activeCampaign, setActiveCampaign] = useState("default");
 
-  // Pillar 3 UI States
   const [secretFindings, setSecretFindings] = useState([]);
   const [vulnCards, setVulnCards] = useState([]);
   const [cyberStrikeRole, setCyberStrikeRole] = useState("Shadow");
@@ -89,7 +97,6 @@ const Dashboard = () => {
   const [proxyPort, setProxyPort] = useState(8080);
   const [targetDrawerOpen, setTargetDrawerOpen] = useState(false);
 
-  // Specific Module States
   const [spoofing, setSpoofing] = useState(false);
   const [proxyActive, setProxyActive] = useState(false);
   const [fuzzingStatus, setFuzzingStatus] = useState("IDLE");
@@ -152,11 +159,6 @@ const Dashboard = () => {
 
   // Bettercap CLI State
   const [bcapStatus, setBcapStatus] = useState({ installed: false, running: false });
-  const [bcapCmd, setBcapCmd] = useState("");
-  const [bcapHistory, setBcapHistory] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('moonkeep_cli_history') || '[]'); } catch { return []; }
-  });
-  const [historyIndex, setHistoryIndex] = useState(-1);
   const [manualTarget, setManualTarget] = useState("");
   const [cliOutput, setCliOutput] = useState([{ text: '═══ NATIVE CAP ENGINE ═══', color: '#a78bfa' }, { text: 'Type "help" for available commands.', color: '#666' }]);
   const [suggestion, setSuggestion] = useState("");
@@ -247,7 +249,6 @@ const Dashboard = () => {
   }, []);
 
   useEffect(() => {
-    // Force path sync
     if (window.location.pathname !== "/") window.history.replaceState({}, "", "/");
 
     const boot = async () => {
@@ -269,7 +270,7 @@ const Dashboard = () => {
             setActiveTarget(d.devices[0]);
           }
         });
-      } catch (err) {
+      } catch {
         setStrikeLog(prev => [...prev.slice(-40), "[!] BACKEND OFFLINE ON PORT 8001"]);
       }
     };
@@ -319,7 +320,7 @@ const Dashboard = () => {
     };
 
     return () => ws.current?.close();
-  }, []);
+  }, [authFetch, token]);
 
   useEffect(() => {
     if (!activePlugin) return;
@@ -359,7 +360,6 @@ const Dashboard = () => {
     }
   }, [strikeLog]);
 
-  // Bettercap status polling
   useEffect(() => {
     const pollBcap = setInterval(() => {
       fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
@@ -367,7 +367,7 @@ const Dashboard = () => {
     // Initial check
     fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
     return () => clearInterval(pollBcap);
-  }, []);
+  }, [authFetch]);
 
   const sendBcapCommand = async (cmd) => {
     if (!cmd.trim()) return;
@@ -425,7 +425,7 @@ const Dashboard = () => {
       const data = await res.json();
       setStrikeLog(prev => [...prev.slice(-40), `[<] SUCCESS: ${endpoint}`, `[#] DATA: ${JSON.stringify(data).slice(0, 100)}...`]);
       return data;
-    } catch (err) {
+    } catch {
       setStrikeLog(prev => [...prev.slice(-40), `[!] FAILED: ${endpoint}`]);
       return null;
     }
@@ -445,7 +445,7 @@ const Dashboard = () => {
         a.click();
         document.body.removeChild(a);
       }
-    } catch (err) { }
+    } catch { /* ignore */ }
   };
 
   const renderModuleUI = (plugin = activePlugin) => {
@@ -1792,7 +1792,6 @@ const Dashboard = () => {
             <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Operational Surface Matrix</p>
           </div>
 
-          {/* CAMPAIGN WORKSPACE UI */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', borderLeft: '1px solid rgba(167,139,250,0.2)', borderRight: '1px solid rgba(167,139,250,0.2)', padding: '0 1rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)', letterSpacing: '1px' }}>WORKSPACE / CAMPAIGN</span>
@@ -1802,7 +1801,6 @@ const Dashboard = () => {
                   const newCamp = e.target.value;
                   setActiveCampaign(newCamp);
                   await apiCall(`/campaigns/${newCamp}/activate`, 'PUT');
-                  // Re-hydrate UI
                   const d = await apiCall('/scan');
                   if (d && d.devices) setDevices(d.devices);
                 }}
@@ -1811,12 +1809,11 @@ const Dashboard = () => {
                 {campaigns.map(c => <option key={c.id} value={c.id} style={{ background: '#000' }}>{c.name}</option>)}
               </select>
             </div>
-            <button className="btn-primary flex items-center gap-2" style={{ padding: '0.4rem 0.8rem', fontSize: '0.65rem' }} onClick={handleExportReport}>
+            <button className="btn-primary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.65rem' }} onClick={handleExportReport}>
               EXPORT .MD
             </button>
           </div>
 
-          {/* GLOBAL TARGET INPUT */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, maxWidth: '400px', margin: '0 1rem' }}>
             <span style={{ fontSize: '0.6rem', color: 'var(--neo-cyan)', fontWeight: 900, whiteSpace: 'nowrap' }}>TARGET</span>
             <input
@@ -1903,7 +1900,6 @@ const Dashboard = () => {
             )}
 
           <aside className="glass-card" style={{ display: 'grid', gridTemplateRows: '28px 1fr 2fr 40px', gap: '0.5rem', overflow: 'hidden' }}>
-            {/* Row 1: Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ fontSize: '0.85rem', margin: 0 }}>Tactical Feed</h3>
               <span className="status-badge active" style={{ fontSize: '0.5rem' }}>ENGINE LIVE</span>
@@ -1921,18 +1917,7 @@ const Dashboard = () => {
               ))}
             </div>
 
-            {/* Row 3: MOONKEEP CAP Terminal — takes remaining space */}
-            <div style={{ background: 'rgba(0,0,0,0.95)', borderRadius: '6px', border: '1px solid rgba(167, 139, 250, 0.25)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              {/* Terminal Title Bar */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 8px', background: 'rgba(167,139,250,0.08)', borderBottom: '1px solid rgba(167,139,250,0.15)', flexShrink: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#f43f5e', display: 'inline-block' }} />
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#f59e0b', display: 'inline-block' }} />
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />
-                  <span style={{ fontSize: '0.55rem', color: '#a78bfa', fontWeight: 800, letterSpacing: '1.5px', marginLeft: '4px' }}>MOONKEEP CAP</span>
-                </div>
-                <span style={{ fontSize: '0.45rem', color: 'rgba(167,139,250,0.6)' }}>{bcapStatus.active_modules?.length || 0} active</span>
-              </div>
+            <CapTerminal bcapStatus={bcapStatus} setStrikeLog={setStrikeLog} />
 
               {/* Terminal Output */}
               <div
@@ -2021,12 +2006,11 @@ const Dashboard = () => {
         </div>
       </main>
 
-      {/* Target Detail Drawer Overlay */}
       {targetDrawerOpen && activeTarget && (
         <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: '400px', background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(20px)', borderLeft: '1px solid var(--glass-border)', zIndex: 9000, padding: '2rem', display: 'flex', flexDirection: 'column', animation: 'slideIn 0.3s ease-out' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
             <h2 className="accent-text" style={{ margin: 0, fontSize: '1.2rem' }}>TARGET DETAIL</h2>
-            <button className="btn-primary ghost" style={{ padding: '0.2rem 0.5rem' }} onClick={() => setTargetDrawerOpen(false)}>✕</button>
+            <button className="btn-primary ghost" style={{ padding: '0.2rem 0.5rem' }} onClick={() => setTargetDrawerOpen(false)}>X</button>
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
             <div className="glass-card" style={{ padding: '1rem', marginBottom: '1rem' }}>
@@ -2046,7 +2030,6 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* Toast Notifications */}
       <div style={{ position: 'fixed', top: '1rem', right: '1rem', zIndex: 9999, display: 'flex', flexDirection: 'column', gap: '0.5rem', pointerEvents: 'none' }}>
         {toasts.map(t => (
           <div key={t.id} style={{
@@ -2139,4 +2122,17 @@ const Dashboard = () => {
   );
 };
 
-export default Dashboard;
+const App = () => {
+  return (
+    <AuthProvider>
+      <AppRouter />
+    </AuthProvider>
+  );
+};
+
+const AppRouter = () => {
+  const { isAuthenticated } = useAuth();
+  return isAuthenticated ? <Dashboard /> : <LoginScreen />;
+};
+
+export default App;

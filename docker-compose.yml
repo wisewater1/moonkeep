@@ -1,0 +1,54 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: moonkeep-backend
+    ports:
+      - "8001:8001"
+    depends_on:
+      - redis
+    env_file:
+      - ./backend/.env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - MOONKEEP_DB_PATH=/data/moonkeep_campaigns.db
+    volumes:
+      - moonkeep-data:/data
+    networks:
+      - moonkeep-net
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: moonkeep-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - moonkeep-net
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: moonkeep-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - moonkeep-data:/data
+    networks:
+      - moonkeep-net
+    restart: unless-stopped
+
+volumes:
+  moonkeep-data:
+
+networks:
+  moonkeep-net:
+    driver: bridge
