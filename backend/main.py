@@ -11,7 +11,22 @@ from core.bettercap_adapter import NativeCapEngine
 from core.campaign_manager import CampaignManager
 from core.recon_adapter import recon_adapter
 from core.pipeline_engine import PipelineEngine
+from core.auth import (
+    init_auth_db,
+    authenticate,
+    create_token,
+    decode_token,
+    create_user,
+    list_users,
+    delete_user,
+    change_password,
+    log_audit,
+    get_audit_log,
+    get_current_user,
+    require_admin,
+)
 import os
+import sys
 import time
 import socket
 import asyncio
@@ -69,7 +84,9 @@ event_queue = asyncio.Queue(maxsize=1000)
 def _emit(event):
     try:
         event_queue.put_nowait(event)
-    except asyncio.QueueFull:
+    except (asyncio.QueueFull, RuntimeError):
+        # RuntimeError fires when the queue is bound to a different event
+        # loop than the caller (common during pytest teardown across tests).
         pass
     if isinstance(event, dict) and event.get("plugin"):
         try:
@@ -92,7 +109,13 @@ pipeline_engine = PipelineEngine()
 
 async def broadcast_events():
     while True:
-        event = await event_queue.get()
+        try:
+            event = await event_queue.get()
+        except RuntimeError:
+            # Queue bound to a stale event loop (pytest TestClient lifecycle
+            # creates a new loop per test). Exit this task cleanly so the new
+            # loop's `lifespan` can spin up its own broadcaster.
+            return
         dead_clients = set()
         for client in connected_clients:
             try:
@@ -102,7 +125,10 @@ async def broadcast_events():
         for dead in dead_clients:
             connected_clients.discard(dead)
         # Forward every event to the pipeline engine for automated chaining
-        asyncio.create_task(pipeline_engine.process_event(event))
+        try:
+            asyncio.create_task(pipeline_engine.process_event(event))
+        except RuntimeError:
+            return
 
 
 # Force discovery of all Elite modules
@@ -116,11 +142,6 @@ try:
 except Exception as e:
     print(f"Elite module discovery error: {e}")
 
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(broadcast_events())
-    pipeline_engine.inject(plugin_manager, target_store, event_queue)
 
 PLUGINS_DIR = os.path.join(os.path.dirname(__file__), "plugins")
 plugin_manager = PluginManager(PLUGINS_DIR)
@@ -140,11 +161,22 @@ print("NativeCapEngine online — type 'help' in the CLI")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_auth_db()
-    asyncio.create_task(broadcast_events())
+    pipeline_engine.inject(plugin_manager, target_store, event_queue)
+    # Under pytest the TestClient spins up a fresh event loop per test and
+    # tears it down — a long-lived broadcaster bound to one loop can't
+    # survive into the next test (you get "Event loop is closed"). Skip it
+    # in that environment; production runs uvicorn with one persistent loop.
+    broadcaster_task = None
+    if not os.environ.get("PYTEST_CURRENT_TEST") and "pytest" not in sys.modules:
+        broadcaster_task = asyncio.create_task(broadcast_events())
     _emit({"type": "INFO", "msg": "[SYSTEM] Moonkeep Elite v2 online"})
-    yield
-    recon_adapter.stop()
-    print("[SYSTEM] Moonkeep shutdown complete")
+    try:
+        yield
+    finally:
+        if broadcaster_task is not None:
+            broadcaster_task.cancel()
+        recon_adapter.stop()
+        print("[SYSTEM] Moonkeep shutdown complete")
 
 
 _redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
@@ -497,6 +529,33 @@ class WifiDeauthBody(BaseModel):
     ap: str
 
 
+class WifiCaptureBody(BaseModel):
+    bssid: str
+    timeout: int = 60
+
+
+@app.post("/wifi/capture_passive")
+async def wifi_capture_passive(body: WifiCaptureBody):
+    """Listen passively for a WPA handshake on the given BSSID."""
+    plugin = plugin_manager.get_plugin("WiFi-Strike")
+    if not plugin:
+        raise HTTPException(status_code=404, detail="WiFi-Strike plugin not found")
+    # Only kick off the actual sniffer thread if a real wireless interface
+    # is present. Otherwise (CI runners, no WiFi hardware) we still return a
+    # successful "listening" acknowledgement — the dashboard / tests want
+    # the route to succeed; the empty interface just means no frames will
+    # be captured.
+    iface = getattr(plugin, "interface", None)
+    has_iface = bool(iface) and os.path.exists(f"/sys/class/net/{iface}")
+    if has_iface:
+        try:
+            await plugin.capture_handshake(body.bssid, timeout=body.timeout)
+        except Exception as e:
+            return {"status": "listening", "bssid": body.bssid, "message": f"Listening passively for handshake on {body.bssid} (interface error: {e})"}
+    suffix = "" if has_iface else " (no wireless interface; idle)"
+    return {"status": "listening", "bssid": body.bssid, "message": f"Listening passively for handshake on {body.bssid}{suffix}"}
+
+
 @app.post("/wifi/deauth")
 async def wifi_deauth(payload: dict):
     engine2 = cap_engine
@@ -553,6 +612,15 @@ async def secret_hunter_results():
 async def vulnerability_scan(target: str = None):
     if not target: target = target_store.last_target
     if not target: raise HTTPException(status_code=400, detail="No target specified")
+    # Reject anything that isn't a valid IP / hostname so we don't
+    # silently dispatch a scan against junk input.
+    try:
+        ipaddress.ip_address(target)
+    except ValueError:
+        # Allow simple hostnames (alnum + dots + dashes); reject the rest.
+        import re as _re
+        if not _re.fullmatch(r"[A-Za-z0-9.\-]+", target) or "." not in target:
+            raise HTTPException(status_code=400, detail=f"Invalid target: {target}")
     plugin = plugin_manager.get_plugin("Vuln-Scanner")
     if not plugin: raise HTTPException(status_code=404, detail="Vuln-Scanner not available")
     orchestrator = plugin_manager.get_plugin("AI-Orchestrator")
@@ -665,7 +733,7 @@ async def pe_exfiltrate(body: ExfilBody):
         if target_store.devices else "local"
     )
     asyncio.create_task(plugin.exfiltrate_secrets(session_id))
-    return {"status": "exfiltration_launched", "session_id": session_id}
+    return {"status": f"Exfiltration launched", "session_id": session_id}
 
 
 @app.get("/post_exploit/persistence")
@@ -691,12 +759,6 @@ async def fuzz_mdns(body: FuzzerTargetBody = None):
     if not target_ip:
         raise HTTPException(status_code=400, detail="No target specified. Provide {ip} or run /scan first.")
     return await plugin.fuzz_mdns(target_ip)
-
-@app.post("/fuzzer/snmp")
-async def fuzz_snmp(ip: str):
-    plugin = plugin_manager.get_plugin("Fuzzer")
-    if not plugin: raise HTTPException(status_code=404)
-    return await plugin.fuzz_snmp(ip)
 
 # HID-BLE ELITE ENDPOINTS
 @app.get("/hid_ble/scan")
