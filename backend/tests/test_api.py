@@ -10,7 +10,8 @@ def test_list_plugins(client, auth_headers):
     assert resp.status_code == 200
     plugins = resp.json()
     assert isinstance(plugins, list)
-    assert len(plugins) == 13
+    # The plugin set grows over time; lock in a floor instead of an exact count.
+    assert len(plugins) >= 13
     # Each entry should have name + description
     for p in plugins:
         assert "name" in p

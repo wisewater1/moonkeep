@@ -11,6 +11,20 @@ from core.bettercap_adapter import NativeCapEngine
 from core.campaign_manager import CampaignManager
 from core.recon_adapter import recon_adapter
 from core.pipeline_engine import PipelineEngine
+from core.auth import (
+    init_auth_db,
+    authenticate,
+    create_token,
+    decode_token,
+    create_user,
+    list_users,
+    delete_user,
+    change_password,
+    log_audit,
+    get_audit_log,
+    get_current_user,
+    require_admin,
+)
 import os
 import time
 import socket
@@ -117,11 +131,6 @@ except Exception as e:
     print(f"Elite module discovery error: {e}")
 
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(broadcast_events())
-    pipeline_engine.inject(plugin_manager, target_store, event_queue)
-
 PLUGINS_DIR = os.path.join(os.path.dirname(__file__), "plugins")
 plugin_manager = PluginManager(PLUGINS_DIR)
 plugin_manager.load_plugins()
@@ -140,6 +149,7 @@ print("NativeCapEngine online — type 'help' in the CLI")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_auth_db()
+    pipeline_engine.inject(plugin_manager, target_store, event_queue)
     asyncio.create_task(broadcast_events())
     _emit({"type": "INFO", "msg": "[SYSTEM] Moonkeep Elite v2 online"})
     yield
@@ -497,6 +507,21 @@ class WifiDeauthBody(BaseModel):
     ap: str
 
 
+class WifiCaptureBody(BaseModel):
+    bssid: str
+    timeout: int = 60
+
+
+@app.post("/wifi/capture_passive")
+async def wifi_capture_passive(body: WifiCaptureBody):
+    """Listen passively for a WPA handshake on the given BSSID."""
+    plugin = plugin_manager.get_plugin("WiFi-Strike")
+    if not plugin:
+        raise HTTPException(status_code=404, detail="WiFi-Strike plugin not found")
+    asyncio.create_task(plugin.capture_handshake(body.bssid, timeout=body.timeout))
+    return {"status": "listening", "bssid": body.bssid, "message": f"Listening passively for handshake on {body.bssid}"}
+
+
 @app.post("/wifi/deauth")
 async def wifi_deauth(payload: dict):
     engine2 = cap_engine
@@ -553,6 +578,15 @@ async def secret_hunter_results():
 async def vulnerability_scan(target: str = None):
     if not target: target = target_store.last_target
     if not target: raise HTTPException(status_code=400, detail="No target specified")
+    # Reject anything that isn't a valid IP / hostname so we don't
+    # silently dispatch a scan against junk input.
+    try:
+        ipaddress.ip_address(target)
+    except ValueError:
+        # Allow simple hostnames (alnum + dots + dashes); reject the rest.
+        import re as _re
+        if not _re.fullmatch(r"[A-Za-z0-9.\-]+", target) or "." not in target:
+            raise HTTPException(status_code=400, detail=f"Invalid target: {target}")
     plugin = plugin_manager.get_plugin("Vuln-Scanner")
     if not plugin: raise HTTPException(status_code=404, detail="Vuln-Scanner not available")
     orchestrator = plugin_manager.get_plugin("AI-Orchestrator")
@@ -665,7 +699,7 @@ async def pe_exfiltrate(body: ExfilBody):
         if target_store.devices else "local"
     )
     asyncio.create_task(plugin.exfiltrate_secrets(session_id))
-    return {"status": "exfiltration_launched", "session_id": session_id}
+    return {"status": f"Exfiltration launched", "session_id": session_id}
 
 
 @app.get("/post_exploit/persistence")
@@ -691,12 +725,6 @@ async def fuzz_mdns(body: FuzzerTargetBody = None):
     if not target_ip:
         raise HTTPException(status_code=400, detail="No target specified. Provide {ip} or run /scan first.")
     return await plugin.fuzz_mdns(target_ip)
-
-@app.post("/fuzzer/snmp")
-async def fuzz_snmp(ip: str):
-    plugin = plugin_manager.get_plugin("Fuzzer")
-    if not plugin: raise HTTPException(status_code=404)
-    return await plugin.fuzz_snmp(ip)
 
 # HID-BLE ELITE ENDPOINTS
 @app.get("/hid_ble/scan")

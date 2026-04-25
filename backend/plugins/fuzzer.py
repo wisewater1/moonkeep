@@ -3,6 +3,8 @@ from scapy.all import IP, UDP, SNMP, SNMPget, SNMPvarbind, ASN1_OID, send, Raw, 
 import asyncio
 import struct
 import os
+import threading
+import time
 
 class FuzzerPlugin(BasePlugin):
     def __init__(self):
@@ -37,28 +39,25 @@ class FuzzerPlugin(BasePlugin):
     async def fuzz_snmp(self, target_ip, community="public", iterations=200):
         """
         Fuzz SNMP with long OIDs, malformed community strings,
-        overflow values, and type confusion payloads.
+        overflow values, and type confusion payloads. The work runs in a
+        daemon thread so the route returns immediately.
         """
         self.running = True
         self.emit("INFO", {"msg": f"SNMP fuzzer targeting {target_ip} ({iterations} iterations)"})
 
-        async def _fuzz_async():
-            mutations = [
-                # Long OID traversal
-                lambda i: "1.3.6.1.2.1.1." + "1." * (i % 80),
-                # Negative OID components
-                lambda i: f"1.3.6.1.2.1.{-i}.{i*999}",
-                # Maximum integer OID
-                lambda i: f"1.3.6.1.2.1.1.{2**31 - 1}.{i}",
-                # Deep nesting
-                lambda i: ".".join(["1"] * min(i + 10, 128)),
-                # Zero-length components
-                lambda i: f"1.3.6.1...{i}.0",
-            ]
-            communities = [
-                community, "A" * 256, "", "\x00" * 64,
-                "public\x00private", "../../../etc/passwd",
-            ]
+        mutations = [
+            lambda i: "1.3.6.1.2.1.1." + "1." * (i % 80),
+            lambda i: f"1.3.6.1.2.1.{-i}.{i*999}",
+            lambda i: f"1.3.6.1.2.1.1.{2**31 - 1}.{i}",
+            lambda i: ".".join(["1"] * min(i + 10, 128)),
+            lambda i: f"1.3.6.1...{i}.0",
+        ]
+        communities = [
+            community, "A" * 256, "", "\x00" * 64,
+            "public\x00private", "../../../etc/passwd",
+        ]
+
+        def _run():
             for i in range(iterations):
                 if not self.running:
                     break
@@ -69,16 +68,16 @@ class FuzzerPlugin(BasePlugin):
                         community=comm,
                         PDU=SNMPget(varbindlist=[SNMPvarbind(oid=ASN1_OID(oid))])
                     )
-                    await asyncio.to_thread(send, pkt, verbose=False)
+                    send(pkt, verbose=False)
                     self.stats["snmp_sent"] += 1
                     if i % 50 == 0:
                         self.emit("INFO", {"msg": f"SNMP fuzz progress: {i}/{iterations} packets"})
-                    await asyncio.sleep(0.03)
-                except Exception as e:
+                except Exception:
                     self.stats["errors"] += 1
+                time.sleep(0.03)
             self.emit("SUCCESS", {"msg": f"SNMP fuzzing complete: {self.stats['snmp_sent']} sent, {self.stats['errors']} errors"})
 
-        asyncio.create_task(_fuzz_async())
+        threading.Thread(target=_run, daemon=True).start()
         return {"status": "SNMP Fuzzing Active", "target": target_ip, "iterations": iterations}
 
     async def fuzz_mdns(self, target_ip="224.0.0.251", iterations=150):
@@ -115,4 +114,38 @@ class FuzzerPlugin(BasePlugin):
                 time.sleep(0.05)
 
         threading.Thread(target=_run, daemon=True).start()
+        self.stats["mdns_sent"] += len(mutations)
         return {"status": "MDNS Fuzzing Active", "target": target_ip, "mutations": len(mutations)}
+
+    async def fuzz_upnp(self, target_ip, iterations=80):
+        """
+        Send malformed SSDP / UPnP M-SEARCH probes to a target. Used to
+        flush out brittle device firmware on the LAN.
+        """
+        print(f"Fuzzer: SSDP/UPnP fuzzing -> {target_ip}")
+        mutations = [
+            b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: upnp:rootdevice\r\n\r\n",
+            b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: " + b"\xff" * 200 + b"\r\nST: ssdp:all\r\n\r\n",
+            b"NOTIFY * HTTP/1.1\r\n" + b"X-Junk: " + b"A" * 1024 + b"\r\n\r\n",
+            b"M-SEARCH * HTTP/1.1\r\nHOST: " + (target_ip.encode() if isinstance(target_ip, str) else b"0.0.0.0") + b":1900\r\nMAN: \"ssdp:discover\"\r\nMX: 0\r\nST: \x00\x00\xff\xff\r\n\r\n",
+        ]
+
+        def _run():
+            for i in range(min(iterations, 200)):
+                if not self.running and i > 0:
+                    break
+                payload = mutations[i % len(mutations)]
+                try:
+                    pkt = IP(dst=target_ip) / UDP(sport=RandShort(), dport=1900) / Raw(load=payload)
+                    send(pkt, verbose=False)
+                    self.stats["upnp_sent"] += 1
+                except Exception:
+                    self.stats["errors"] += 1
+                time.sleep(0.02)
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"status": "UPnP Fuzzing Active", "target": target_ip, "mutations": len(mutations)}
+
+    def get_stats(self):
+        """Snapshot of fuzzer counters for the dashboard / API."""
+        return {**self.stats, "running": self.running, "targets": list(self.targets)}

@@ -10,6 +10,8 @@ class SnifferPlugin(BasePlugin):
     def __init__(self):
         self.sniffer = None
         self.credentials: list = []
+        self.dns_log: list = []
+        self.packet_count: int = 0
 
     @property
     def name(self) -> str:
@@ -31,6 +33,10 @@ class SnifferPlugin(BasePlugin):
         if self.sniffer:
             self.sniffer.stop()
             self.emit("INFO", {"msg": f"Sniffer stopped. Captured {len(self.credentials)} credentials, {self.packet_count} packets"})
+
+    def get_dns_log(self):
+        """Return captured DNS query log (most recent last)."""
+        return list(self.dns_log)
 
     # ------------------------------------------------------------------
     # Packet router

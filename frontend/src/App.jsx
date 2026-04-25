@@ -162,6 +162,9 @@ const Dashboard = () => {
   const [manualTarget, setManualTarget] = useState("");
   const [cliOutput, setCliOutput] = useState([{ text: '═══ NATIVE CAP ENGINE ═══', color: '#a78bfa' }, { text: 'Type "help" for available commands.', color: '#666' }]);
   const [suggestion, setSuggestion] = useState("");
+  const [bcapCmd, setBcapCmd] = useState("");
+  const [bcapHistory, setBcapHistory] = useState([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
   const cliRef = useRef(null);
   const tacticalFeedRef = useRef(null);
   const inputRef = useRef(null);
