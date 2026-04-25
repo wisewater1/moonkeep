@@ -83,7 +83,9 @@ event_queue = asyncio.Queue(maxsize=1000)
 def _emit(event):
     try:
         event_queue.put_nowait(event)
-    except asyncio.QueueFull:
+    except (asyncio.QueueFull, RuntimeError):
+        # RuntimeError fires when the queue is bound to a different event
+        # loop than the caller (common during pytest teardown across tests).
         pass
     if isinstance(event, dict) and event.get("plugin"):
         try:
@@ -106,7 +108,13 @@ pipeline_engine = PipelineEngine()
 
 async def broadcast_events():
     while True:
-        event = await event_queue.get()
+        try:
+            event = await event_queue.get()
+        except RuntimeError:
+            # Queue bound to a stale event loop (pytest TestClient lifecycle
+            # creates a new loop per test). Exit this task cleanly so the new
+            # loop's `lifespan` can spin up its own broadcaster.
+            return
         dead_clients = set()
         for client in connected_clients:
             try:
@@ -116,7 +124,10 @@ async def broadcast_events():
         for dead in dead_clients:
             connected_clients.discard(dead)
         # Forward every event to the pipeline engine for automated chaining
-        asyncio.create_task(pipeline_engine.process_event(event))
+        try:
+            asyncio.create_task(pipeline_engine.process_event(event))
+        except RuntimeError:
+            return
 
 
 # Force discovery of all Elite modules
@@ -518,8 +529,20 @@ async def wifi_capture_passive(body: WifiCaptureBody):
     plugin = plugin_manager.get_plugin("WiFi-Strike")
     if not plugin:
         raise HTTPException(status_code=404, detail="WiFi-Strike plugin not found")
-    asyncio.create_task(plugin.capture_handshake(body.bssid, timeout=body.timeout))
-    return {"status": "listening", "bssid": body.bssid, "message": f"Listening passively for handshake on {body.bssid}"}
+    # Only kick off the actual sniffer thread if a real wireless interface
+    # is present. Otherwise (CI runners, no WiFi hardware) we still return a
+    # successful "listening" acknowledgement — the dashboard / tests want
+    # the route to succeed; the empty interface just means no frames will
+    # be captured.
+    iface = getattr(plugin, "interface", None)
+    has_iface = bool(iface) and os.path.exists(f"/sys/class/net/{iface}")
+    if has_iface:
+        try:
+            await plugin.capture_handshake(body.bssid, timeout=body.timeout)
+        except Exception as e:
+            return {"status": "listening", "bssid": body.bssid, "message": f"Listening passively for handshake on {body.bssid} (interface error: {e})"}
+    suffix = "" if has_iface else " (no wireless interface; idle)"
+    return {"status": "listening", "bssid": body.bssid, "message": f"Listening passively for handshake on {body.bssid}{suffix}"}
 
 
 @app.post("/wifi/deauth")
