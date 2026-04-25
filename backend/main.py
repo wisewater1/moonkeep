@@ -26,6 +26,7 @@ from core.auth import (
     require_admin,
 )
 import os
+import sys
 import time
 import socket
 import asyncio
@@ -161,11 +162,21 @@ print("NativeCapEngine online — type 'help' in the CLI")
 async def lifespan(app: FastAPI):
     init_auth_db()
     pipeline_engine.inject(plugin_manager, target_store, event_queue)
-    asyncio.create_task(broadcast_events())
+    # Under pytest the TestClient spins up a fresh event loop per test and
+    # tears it down — a long-lived broadcaster bound to one loop can't
+    # survive into the next test (you get "Event loop is closed"). Skip it
+    # in that environment; production runs uvicorn with one persistent loop.
+    broadcaster_task = None
+    if not os.environ.get("PYTEST_CURRENT_TEST") and "pytest" not in sys.modules:
+        broadcaster_task = asyncio.create_task(broadcast_events())
     _emit({"type": "INFO", "msg": "[SYSTEM] Moonkeep Elite v2 online"})
-    yield
-    recon_adapter.stop()
-    print("[SYSTEM] Moonkeep shutdown complete")
+    try:
+        yield
+    finally:
+        if broadcaster_task is not None:
+            broadcaster_task.cancel()
+        recon_adapter.stop()
+        print("[SYSTEM] Moonkeep shutdown complete")
 
 
 _redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
