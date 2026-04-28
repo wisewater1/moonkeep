@@ -10,11 +10,22 @@ def test_list_plugins(client, auth_headers):
     assert resp.status_code == 200
     plugins = resp.json()
     assert isinstance(plugins, list)
-    assert len(plugins) == 13
+    # The plugin set grows over time; lock in a floor instead of an exact count.
+    assert len(plugins) >= 13
     # Each entry should have name + description
     for p in plugins:
         assert "name" in p
         assert "description" in p
+
+
+def test_capabilities(client, auth_headers):
+    resp = client.get("/capabilities", headers=auth_headers)
+    assert resp.status_code == 200
+    caps = resp.json()
+    for k in ("root", "raw_packets", "interfaces", "binaries"):
+        assert k in caps
+    assert isinstance(caps["interfaces"], list)
+    assert isinstance(caps["binaries"], dict)
 
 
 # ── Bettercap (NativeCapEngine) ──────────────────────────────────

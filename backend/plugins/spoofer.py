@@ -1,4 +1,5 @@
 from core.plugin_manager import BasePlugin
+from core.capabilities import can_send_raw_packets, degraded_response
 from scapy.all import ARP, Ether, send, DNS, DNSQR, DNSRR, IP, UDP, sniff, IPv6, ICMPv6ND_NA, ICMPv6NDOptDstLLAddr, DHCP6_Solicit, DHCP6_Advertise, DHCP6_Reply
 import threading
 import time
@@ -32,7 +33,10 @@ class SpooferPlugin(BasePlugin):
     async def start(self, targets=None, gateway=None, dns_table=None, ipv6=True):
         if self.running:
             return
-        
+        if not can_send_raw_packets():
+            self.emit("WARN", {"msg": "Spoofer requires CAP_NET_RAW / root; idling"})
+            return degraded_response("requires_root")
+
         if not targets and hasattr(self, 'target_store') and self.target_store.last_target:
             self.targets = [self.target_store.last_target]
             self.log_event(f"AUTO-TARGET: {self.target_store.last_target}", "AUTO")

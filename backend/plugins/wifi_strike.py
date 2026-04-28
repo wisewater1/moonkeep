@@ -1,4 +1,10 @@
 from core.plugin_manager import BasePlugin
+from core.capabilities import (
+    can_send_raw_packets,
+    first_wireless_interface,
+    has_interface,
+    degraded_response,
+)
 from scapy.all import Dot11, Dot11Deauth, RadioTap, sendp, sniff, EAPOL, wrpcap
 import asyncio
 import threading
@@ -36,20 +42,17 @@ class WiFiAttackPlugin(BasePlugin):
         return "wireless"
 
     async def start(self, interface=None):
-        if interface:
+        if interface and has_interface(interface):
             self.interface = interface
         else:
-            # Auto-detect first wireless interface on Linux
-            try:
-                for iface in os.listdir("/sys/class/net"):
-                    if iface.startswith(("wlan", "wlp", "wlx")):
-                        self.interface = iface
-                        break
-            except Exception:
-                pass
+            self.interface = first_wireless_interface() or interface or self.interface
         self.running = True
-        self.emit("INFO", {"msg": f"WiFi-Strike: interface={self.interface}"})
-        print(f"WiFi-Strike: Initializing on {self.interface}...")
+        if not has_interface(self.interface):
+            self.emit("WARN", {"msg": f"WiFi-Strike: no wireless interface detected (looked for wlan*/wlp*/wlx*)"})
+            print("WiFi-Strike: standby — no wireless interface available")
+        else:
+            self.emit("INFO", {"msg": f"WiFi-Strike: interface={self.interface}"})
+            print(f"WiFi-Strike: Initializing on {self.interface}...")
 
     async def stop(self):
         self.running = False
@@ -64,6 +67,16 @@ class WiFiAttackPlugin(BasePlugin):
 
         if not ap_mac:
             ap_mac = "ff:ff:ff:ff:ff:ff"
+
+        # Pre-flight: refuse politely (200 OK with degraded status) when the
+        # environment can't actually inject 802.11 frames. Avoids crashing a
+        # daemon thread inside scapy.sendp on phones / CI / non-root shells.
+        if not has_interface(self.interface):
+            self.emit("WARN", {"msg": "deauth requested but no wireless interface present"})
+            return degraded_response("no_wireless_interface", target=target_mac, ap=ap_mac)
+        if not can_send_raw_packets():
+            self.emit("WARN", {"msg": "deauth requires CAP_NET_RAW / root"})
+            return degraded_response("requires_root", target=target_mac, ap=ap_mac)
 
         print(f"WiFi-Strike: Launching Deauth against {target_mac} via {ap_mac}")
         try:
@@ -93,6 +106,13 @@ class WiFiAttackPlugin(BasePlugin):
         return {"status": "deauth_active", "target": target_mac, "ap": ap_mac, "count": count}
 
     async def capture_handshake(self, bssid: str, timeout: int = 60):
+        if not has_interface(self.interface):
+            self.emit("WARN", {"msg": f"capture_handshake skipped — no interface ({self.interface!r})"})
+            return degraded_response("no_wireless_interface", bssid=bssid)
+        if not can_send_raw_packets():
+            self.emit("WARN", {"msg": "capture_handshake requires raw socket (root)"})
+            return degraded_response("requires_root", bssid=bssid)
+
         print(f"WiFi-Strike: Monitoring for {bssid} handshakes...")
         captured: list = []
 
@@ -175,6 +195,10 @@ class WiFiAttackPlugin(BasePlugin):
         """
         self.log_event(f"AUTO-ATTACK initiated on {bssid}", "START")
         self.emit("AUTO_ATTACK_START", {"bssid": bssid})
+
+        if not has_interface(self.interface) or not can_send_raw_packets():
+            self.emit("WARN", {"msg": "auto_attack skipped — no wireless interface or insufficient privileges"})
+            return {"bssid": bssid, "cracked": False, "key": None, **degraded_response("no_wireless_interface_or_root")}
 
         found_key: list[str] = []
         done_event = threading.Event()

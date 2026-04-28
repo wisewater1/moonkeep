@@ -145,6 +145,22 @@ class RogueAPPlugin(BasePlugin):
     ):
         if self.running:
             return
+        # Rogue-AP needs hostapd, dnsmasq, a real wireless iface, and root.
+        # Refuse politely on phones / CI / non-privileged shells.
+        from core.capabilities import (
+            has_binary, has_interface, can_send_raw_packets, degraded_response,
+        )
+        missing = [b for b in ("hostapd", "dnsmasq", "iptables") if not has_binary(b)]
+        if missing:
+            self.emit("WARN", {"msg": f"Rogue-AP missing binaries: {', '.join(missing)}"})
+            return degraded_response("missing_binaries", missing=missing, ssid=ssid)
+        if not has_interface(iface_ap):
+            self.emit("WARN", {"msg": f"Rogue-AP: AP interface {iface_ap!r} not present"})
+            return degraded_response("missing_interface", iface=iface_ap, ssid=ssid)
+        if not can_send_raw_packets():
+            self.emit("WARN", {"msg": "Rogue-AP requires root"})
+            return degraded_response("requires_root", ssid=ssid)
+
         self._iface_ap = iface_ap
         self._iface_wan = iface_wan
         self._mode = mode
@@ -159,6 +175,7 @@ class RogueAPPlugin(BasePlugin):
             self._launch_portal()
 
         self.log_event(f"Rogue AP '{ssid}' live on {iface_ap} ch{channel} [{mode}]", "START")
+        return {"status": "rogue_ap_active", "ssid": ssid, "iface": iface_ap, "channel": channel, "mode": mode}
 
     async def stop(self):
         self.running = False
