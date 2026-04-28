@@ -88,17 +88,26 @@ class ProxyPlugin(BasePlugin):
             return
         self.port   = port
         self.script = script
+
+        # Bind defensively — phones / non-root environments often can't claim
+        # arbitrary low-numbered ports, and the port may already be in use.
+        try:
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind(("0.0.0.0", self.port))
+            srv.listen(100)
+        except OSError as exc:
+            self.emit("ERROR", {"msg": f"Proxy: cannot bind :{self.port}: {exc}"})
+            from core.capabilities import degraded_response
+            return degraded_response("bind_failed", port=self.port, error=str(exc))
+
+        self.server = srv
         self.running = True
-
-        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server.bind(("0.0.0.0", self.port))
-        self.server.listen(100)
-
         t = threading.Thread(target=self._run_server, daemon=True)
         t.start()
         print(f"Proxy: MITM listener on :{self.port}  (CA cert: {self._ca_cert})")
         self.emit("PROXY_STARTED", {"port": self.port, "ca": self._ca_cert})
+        return {"status": "proxy_active", "port": self.port}
 
     async def stop(self):
         self.running = False

@@ -1,4 +1,5 @@
 from core.plugin_manager import BasePlugin
+from core.capabilities import has_interface, can_send_raw_packets, degraded_response
 from scapy.all import AsyncSniffer, IP, TCP, UDP, Raw
 import base64
 import re
@@ -22,12 +23,27 @@ class SnifferPlugin(BasePlugin):
         return "Professional DPI & Credential Harvester"
 
     async def start(self, iface: str = None):
+        # Don't try to bind to an interface that doesn't exist — that
+        # crashes inside scapy in a daemon thread and surfaces as an
+        # unhandled-thread warning. Same for non-root environments.
+        if iface and not has_interface(iface):
+            self.emit("WARN", {"msg": f"Sniffer: interface {iface!r} not present, idling"})
+            return degraded_response("missing_interface", iface=iface)
+        if not can_send_raw_packets():
+            self.emit("WARN", {"msg": "Sniffer: raw socket unavailable (needs root); idling"})
+            return degraded_response("requires_root")
+
         kwargs = {"prn": self._process_packet, "store": False}
         if iface:
             kwargs["iface"] = iface
-        self.sniffer = AsyncSniffer(**kwargs)
-        self.sniffer.start()
+        try:
+            self.sniffer = AsyncSniffer(**kwargs)
+            self.sniffer.start()
+        except Exception as exc:
+            self.emit("ERROR", {"msg": f"Sniffer failed to start: {exc}"})
+            return degraded_response("sniffer_start_failed", error=str(exc))
         print(f"Sniffer: DPI active on {iface or 'default interface'}.")
+        return {"status": "sniffer_active", "iface": iface or "default"}
 
     async def stop(self):
         if self.sniffer:

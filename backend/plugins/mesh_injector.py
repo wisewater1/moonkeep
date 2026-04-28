@@ -1,4 +1,7 @@
 from core.plugin_manager import BasePlugin
+from core.capabilities import (
+    has_interface, can_send_raw_packets, has_binary, degraded_response,
+)
 from scapy.all import RadioTap, Dot11, Dot11Beacon, Dot11Elt, sniff, sendp
 import asyncio
 import subprocess
@@ -98,6 +101,13 @@ class MeshInjectorPlugin(BasePlugin):
     ):
         if self.running:
             return
+        if not has_interface(iface):
+            self.emit("WARN", {"msg": f"Mesh-Injector: interface {iface!r} not present"})
+            return degraded_response("missing_interface", iface=iface, mesh_id=mesh_id)
+        if not can_send_raw_packets():
+            self.emit("WARN", {"msg": "Mesh-Injector requires root"})
+            return degraded_response("requires_root", mesh_id=mesh_id)
+
         self.iface = iface
         self.iface_wan = iface_wan
         self.channel = channel

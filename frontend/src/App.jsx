@@ -159,6 +159,7 @@ const Dashboard = () => {
 
   // Bettercap CLI State
   const [bcapStatus, setBcapStatus] = useState({ installed: false, running: false });
+  const [capabilities, setCapabilities] = useState(null);
   const [manualTarget, setManualTarget] = useState("");
   const [cliOutput, setCliOutput] = useState([{ text: '═══ NATIVE CAP ENGINE ═══', color: '#a78bfa' }, { text: 'Type "help" for available commands.', color: '#666' }]);
   const [suggestion, setSuggestion] = useState("");
@@ -371,6 +372,10 @@ const Dashboard = () => {
     }, 5000);
     // Initial check
     fetch(API_BASE + '/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
+    // One-shot capability probe: tells the UI whether raw sockets / a real
+    // wireless interface / aircrack are present so we can label degraded
+    // tools instead of silently 200-with-degraded.
+    fetch(API_BASE + '/capabilities').then(r => r.json()).then(setCapabilities).catch(() => { });
     return () => clearInterval(pollBcap);
   }, [authFetch]);
 
@@ -1762,6 +1767,31 @@ const Dashboard = () => {
             </button>
           ))}
         </nav>
+
+        {/* Capability strip — green dot per available capability, dim per missing */}
+        {capabilities && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', padding: '0 0.1rem', marginBottom: '-0.5rem' }} title="Detected device capabilities">
+            {[
+              { key: 'root',          label: 'ROOT',     have: capabilities.root },
+              { key: 'raw_packets',   label: 'RAW',      have: capabilities.raw_packets },
+              { key: 'wireless_iface', label: 'WIFI',    have: !!capabilities.wireless_iface },
+              { key: 'aircrack',      label: 'AIRCRACK', have: capabilities.binaries?.['aircrack-ng'] },
+              { key: 'hashcat',       label: 'HASHCAT',  have: capabilities.binaries?.hashcat },
+              { key: 'hostapd',       label: 'HOSTAPD',  have: capabilities.binaries?.hostapd },
+            ].map(c => (
+              <span key={c.key} title={c.have ? `${c.label} available` : `${c.label} missing — affected tools will idle`}
+                style={{
+                  fontSize: '0.42rem', fontWeight: 900, letterSpacing: '1px',
+                  padding: '0.15rem 0.35rem', borderRadius: '3px',
+                  background: c.have ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${c.have ? 'rgba(34,197,94,0.4)' : 'rgba(255,255,255,0.08)'}`,
+                  color: c.have ? '#22c55e' : 'var(--text-secondary)',
+                }}>
+                {c.label}
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Engine status + theme toggle */}
         <div className="glass-card" style={{ padding: '0.6rem 0.8rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

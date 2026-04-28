@@ -85,6 +85,19 @@ class RogueRADIUSPlugin(BasePlugin):
     ):
         if self.running:
             return
+        from core.capabilities import (
+            has_binary, has_interface, can_send_raw_packets, degraded_response,
+        )
+        if not has_binary("hostapd"):
+            self.emit("WARN", {"msg": "Rogue-RADIUS: hostapd not installed"})
+            return degraded_response("missing_binary", binary="hostapd", ssid=ssid)
+        if not has_interface(iface):
+            self.emit("WARN", {"msg": f"Rogue-RADIUS: interface {iface!r} not present"})
+            return degraded_response("missing_interface", iface=iface, ssid=ssid)
+        if not can_send_raw_packets():
+            self.emit("WARN", {"msg": "Rogue-RADIUS requires root"})
+            return degraded_response("requires_root", ssid=ssid)
+
         self.running = True
 
         self._thread = threading.Thread(
@@ -94,6 +107,7 @@ class RogueRADIUSPlugin(BasePlugin):
 
         await asyncio.to_thread(self._launch_hostapd, iface, ssid, channel, radius_port)
         self.log_event(f"Rogue RADIUS + WPA-Ent AP '{ssid}' live on {iface}", "START")
+        return {"status": "rogue_radius_active", "ssid": ssid, "iface": iface, "channel": channel}
 
     async def stop(self):
         self.running = False

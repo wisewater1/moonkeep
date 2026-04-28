@@ -18,6 +18,16 @@ def test_list_plugins(client, auth_headers):
         assert "description" in p
 
 
+def test_capabilities(client, auth_headers):
+    resp = client.get("/capabilities", headers=auth_headers)
+    assert resp.status_code == 200
+    caps = resp.json()
+    for k in ("root", "raw_packets", "interfaces", "binaries"):
+        assert k in caps
+    assert isinstance(caps["interfaces"], list)
+    assert isinstance(caps["binaries"], dict)
+
+
 # ── Bettercap (NativeCapEngine) ──────────────────────────────────
 
 def test_bettercap_status(client, auth_headers):

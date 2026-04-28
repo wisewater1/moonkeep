@@ -1,4 +1,5 @@
 from core.plugin_manager import BasePlugin
+from core.capabilities import can_send_raw_packets, degraded_response
 from scapy.all import IP, UDP, SNMP, SNMPget, SNMPvarbind, ASN1_OID, send, Raw, DNS, DNSQR, RandShort
 import asyncio
 import struct
@@ -42,6 +43,9 @@ class FuzzerPlugin(BasePlugin):
         overflow values, and type confusion payloads. The work runs in a
         daemon thread so the route returns immediately.
         """
+        if not can_send_raw_packets():
+            self.emit("WARN", {"msg": "SNMP fuzzer requires root for raw sockets; idling"})
+            return degraded_response("requires_root", target=target_ip, iterations=iterations)
         self.running = True
         self.emit("INFO", {"msg": f"SNMP fuzzer targeting {target_ip} ({iterations} iterations)"})
 
@@ -86,6 +90,9 @@ class FuzzerPlugin(BasePlugin):
         Sends mutations: oversized names, null bytes, max-label boundaries,
         and service-discovery probes to the mDNS multicast group.
         """
+        if not can_send_raw_packets():
+            self.emit("WARN", {"msg": "mDNS fuzzer requires root; idling"})
+            return degraded_response("requires_root", target=target_ip)
         print(f"Fuzzer: Flooding mDNS multicast with malformed discovery frames -> {target_ip}")
         from scapy.all import DNS, DNSQR
 
@@ -122,6 +129,9 @@ class FuzzerPlugin(BasePlugin):
         Send malformed SSDP / UPnP M-SEARCH probes to a target. Used to
         flush out brittle device firmware on the LAN.
         """
+        if not can_send_raw_packets():
+            self.emit("WARN", {"msg": "UPnP fuzzer requires root; idling"})
+            return degraded_response("requires_root", target=target_ip)
         print(f"Fuzzer: SSDP/UPnP fuzzing -> {target_ip}")
         mutations = [
             b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: upnp:rootdevice\r\n\r\n",

@@ -318,6 +318,19 @@ def list_plugins_route():
     return plugin_manager.list_plugins()
 
 
+@app.get("/capabilities")
+def capabilities_route():
+    """
+    Snapshot of what this host can actually do — root, raw sockets, real
+    wireless interface, presence of external tools (aircrack/hostapd/...).
+    The mobile dashboard uses this to gray out plugin actions that would
+    otherwise return a `degraded` response (so the operator gets a hint
+    *why* a tool is idle instead of repeatedly tapping a dead button).
+    """
+    from core.capabilities import capability_summary
+    return capability_summary()
+
+
 # ─── CAMPAIGN ENDPOINTS ──────────────────────────────────────────
 
 @app.get("/campaigns")

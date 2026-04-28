@@ -560,6 +560,30 @@ tbody tr:hover {
   input, select, textarea {
     font-size: 16px !important; /* prevents iOS zoom-on-focus */
     min-height: 40px;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  /* Tables in panels: become block-flow on phones so they don't get
+     clipped off-screen. Each row stacks; cells wrap. Horizontal scroll
+     stays available for genuinely table-shaped data. */
+  .glass-card table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+    font-size: 0.7rem;
+  }
+  .glass-card table th,
+  .glass-card table td {
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+
+  /* MAC / IP / hex output should wrap rather than overflow */
+  [style*="Fira Code"], [style*="monospace"] {
+    word-break: break-all;
+    overflow-wrap: anywhere;
   }
 
   /* Command palette on phone */
