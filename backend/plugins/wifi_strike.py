@@ -190,12 +190,15 @@ class WiFiAttackPlugin(BasePlugin):
                     captured.append(pkt)
                     self.emit("EAPOL_FRAME", {"bssid": bssid, "frame": len(captured)})
 
-            sniff(
-                iface=self.interface,
-                prn=_pkt,
-                stop_filter=lambda _: len(captured) >= 4 or done_event.is_set(),
-                timeout=timeout,
-            )
+            try:
+                sniff(
+                    iface=self.interface,
+                    prn=_pkt,
+                    stop_filter=lambda _: len(captured) >= 4 or done_event.is_set(),
+                    timeout=timeout,
+                )
+            except Exception:
+                pass
 
             if len(captured) >= 4:
                 fname = os.path.join(
