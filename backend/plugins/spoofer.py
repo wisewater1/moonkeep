@@ -104,7 +104,10 @@ class SpooferPlugin(BasePlugin):
             time.sleep(5)
 
     def _dns_sniffer(self):
-        sniff(filter="udp port 53", prn=self._dns_spoof, stop_filter=lambda x: not self.running)
+        try:
+            sniff(filter="udp port 53", prn=self._dns_spoof, stop_filter=lambda x: not self.running)
+        except Exception:
+            pass
 
     def _dns_spoof(self, pkt):
         if DNS in pkt and DNSQR in pkt:
