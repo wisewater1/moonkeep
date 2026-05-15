@@ -89,10 +89,15 @@ class ProxyPlugin(BasePlugin):
         self.port   = port
         self.script = script
         self.running = True
-
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server.bind(("0.0.0.0", self.port))
+        try:
+            self.server.bind(("0.0.0.0", self.port))
+        except OSError:
+            self.server.close()
+            self.server = None
+            self.running = False
+            raise
         self.server.listen(100)
 
         t = threading.Thread(target=self._run_server, daemon=True)

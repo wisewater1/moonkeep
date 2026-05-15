@@ -139,8 +139,15 @@ print("NativeCapEngine online — type 'help' in the CLI")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_auth_db()
+    global event_queue
+    # Reinitialize per event-loop so TestClient restarts don't get
+    # "bound to a different event loop" errors from the module-level queue.
+    event_queue = asyncio.Queue(maxsize=1000)
+    for plugin in plugin_manager.plugins.values():
+        plugin.event_queue = event_queue
+    cap_engine.inject(plugin_manager, event_queue, target_store)
     pipeline_engine.inject(plugin_manager, target_store, event_queue)
+    init_auth_db()
     asyncio.create_task(broadcast_events())
     _emit({"type": "INFO", "msg": "[SYSTEM] Moonkeep Elite v2 online"})
     yield
