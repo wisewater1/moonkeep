@@ -1,0 +1,10 @@
+# Optional recon-ng full dependencies
+# Install with: pip install -r requirements-recon.txt
+# Only needed when running recon-ng directly (not required for the main API or tests)
+-r requirements.txt
+lxml>=4.9.0
+mechanize>=0.4.0
+flasgger>=0.9.7
+dicttoxml>=1.7.0
+xlsxwriter>=3.0.0
+unicodecsv>=0.14.0

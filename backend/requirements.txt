@@ -14,19 +14,17 @@ slowapi>=0.1.9
 scapy>=2.5.0
 requests>=2.28.0
 
-# Recon-ng Dependencies
-pyyaml>=6.0
-dnspython>=2.3.0
-lxml>=4.9.0
-mechanize>=0.4.0
-flask>=3.0.0
-flask-restful>=0.3.10
-flasgger>=0.9.7
-dicttoxml>=1.7.0
-xlsxwriter>=3.0.0
-unicodecsv>=0.14.0
+# Job Queue
 rq>=1.0.0
 redis>=5.0.0
+
+# Recon-ng core (subset needed by recon_adapter subprocess bridge)
+# Full recon-ng deps (flasgger, unicodecsv, dicttoxml, xlsxwriter, mechanize, lxml) are in
+# requirements-recon.txt and only needed when running recon-ng directly.
+pyyaml>=6.0
+dnspython>=2.3.0
+flask>=3.0.0
+flask-restful>=0.3.10
 
 # Utilities
 python-dotenv>=1.0.0
