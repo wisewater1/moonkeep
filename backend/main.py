@@ -511,6 +511,27 @@ async def wifi_deauth(payload: dict):
     res = engine2.run_command(f"wifi.deauth {target}")
     return res
 
+class CapturePassiveBody(BaseModel):
+    bssid: str
+
+
+@app.post("/wifi/capture_passive")
+async def wifi_capture_passive(body: CapturePassiveBody):
+    plugin = plugin_manager.get_plugin("WiFi-Strike")
+    if not plugin:
+        raise HTTPException(status_code=404, detail="WiFi-Strike plugin not found")
+    asyncio.create_task(plugin.capture_handshake(body.bssid))
+    return {"message": f"Listening for handshake on {body.bssid}", "bssid": body.bssid}
+
+
+@app.get("/wifi/handshakes")
+async def wifi_handshakes():
+    plugin = plugin_manager.get_plugin("WiFi-Strike")
+    if not plugin:
+        raise HTTPException(status_code=404, detail="WiFi-Strike plugin not found")
+    return {"handshakes": getattr(plugin, "handshakes", [])}
+
+
 @app.get("/ai/analyze")
 async def trigger_ai_analysis():
     orchestrator = plugin_manager.get_plugin("AI-Orchestrator")
@@ -554,6 +575,13 @@ async def secret_hunter_results():
 async def vulnerability_scan(target: str = None):
     if not target: target = target_store.last_target
     if not target: raise HTTPException(status_code=400, detail="No target specified")
+    try:
+        ipaddress.ip_network(target, strict=False)
+    except ValueError:
+        try:
+            ipaddress.ip_address(target)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid target: {target}. Use IP or CIDR notation.")
     plugin = plugin_manager.get_plugin("Vuln-Scanner")
     if not plugin: raise HTTPException(status_code=404, detail="Vuln-Scanner not available")
     orchestrator = plugin_manager.get_plugin("AI-Orchestrator")
@@ -666,7 +694,7 @@ async def pe_exfiltrate(body: ExfilBody):
         if target_store.devices else "local"
     )
     asyncio.create_task(plugin.exfiltrate_secrets(session_id))
-    return {"status": "exfiltration_launched", "session_id": session_id}
+    return {"status": "Exfiltration Launched", "session_id": session_id}
 
 
 @app.get("/post_exploit/persistence")
@@ -692,12 +720,6 @@ async def fuzz_mdns(body: FuzzerTargetBody = None):
     if not target_ip:
         raise HTTPException(status_code=400, detail="No target specified. Provide {ip} or run /scan first.")
     return await plugin.fuzz_mdns(target_ip)
-
-@app.post("/fuzzer/snmp")
-async def fuzz_snmp(ip: str):
-    plugin = plugin_manager.get_plugin("Fuzzer")
-    if not plugin: raise HTTPException(status_code=404)
-    return await plugin.fuzz_snmp(ip)
 
 # HID-BLE ELITE ENDPOINTS
 @app.get("/hid_ble/scan")
