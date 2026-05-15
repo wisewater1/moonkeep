@@ -11,6 +11,11 @@ from core.bettercap_adapter import NativeCapEngine
 from core.campaign_manager import CampaignManager
 from core.recon_adapter import recon_adapter
 from core.pipeline_engine import PipelineEngine
+from core.auth import (
+    init_auth_db, create_user, authenticate, create_token, decode_token,
+    get_current_user, require_admin, log_audit, change_password,
+    list_users, delete_user, get_audit_log,
+)
 import os
 import time
 import socket
@@ -117,11 +122,6 @@ except Exception as e:
     print(f"Elite module discovery error: {e}")
 
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(broadcast_events())
-    pipeline_engine.inject(plugin_manager, target_store, event_queue)
-
 PLUGINS_DIR = os.path.join(os.path.dirname(__file__), "plugins")
 plugin_manager = PluginManager(PLUGINS_DIR)
 plugin_manager.load_plugins()
@@ -140,6 +140,7 @@ print("NativeCapEngine online — type 'help' in the CLI")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_auth_db()
+    pipeline_engine.inject(plugin_manager, target_store, event_queue)
     asyncio.create_task(broadcast_events())
     _emit({"type": "INFO", "msg": "[SYSTEM] Moonkeep Elite v2 online"})
     yield

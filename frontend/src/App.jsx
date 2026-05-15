@@ -71,24 +71,24 @@ const ReconTerminal = () => {
 };
 
 const Dashboard = () => {
-  const { authFetch, user, logout, token } = useAuth();
+  const { authFetch, token } = useAuth();
 
   const [plugins, setPlugins] = useState([]);
-  const [activePlugin, setActivePlugin] = useState("");
+  const [activePlugin, setActivePlugin] = useState(() => { try { return localStorage.getItem('moonkeep_plugin') || ''; } catch { return ''; } });
   const [devices, setDevices] = useState([]);
   const [networks, setNetworks] = useState([]);
   const [packets, setPackets] = useState([]);
   const [scanning, setScanning] = useState(false);
-  const [capturedCreds, setCapturedCreds] = useState([]);
-  const [graphData, setGraphData] = useState({ nodes: [], links: [] });
-  const [activeTarget, setActiveTarget] = useState(null);
+  const [capturedCreds, setCapturedCreds] = useState(() => { try { return JSON.parse(localStorage.getItem('moonkeep_creds') || '[]'); } catch { return []; } });
+  const [_graphData, setGraphData] = useState({ nodes: [], links: [] });
+  const [activeTarget, setActiveTarget] = useState(() => { try { return JSON.parse(localStorage.getItem('moonkeep_target')); } catch { return null; } });
   const [strikeLog, setStrikeLog] = useState(["[#] MOONKEEP v2 CORE INITIALIZED", "[#] STANDBY..."]);
   const [toasts, setToasts] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [activeCampaign, setActiveCampaign] = useState("default");
 
   const [secretFindings, setSecretFindings] = useState([]);
-  const [vulnCards, setVulnCards] = useState([]);
+  const [vulnCards, setVulnCards] = useState(() => { try { return JSON.parse(localStorage.getItem('moonkeep_vulns') || '[]'); } catch { return []; } });
   const [cyberStrikeRole, setCyberStrikeRole] = useState("Shadow");
   const [cyberStrikeLog, setCyberStrikeLog] = useState([]);
   const [aiCmd, setAiCmd] = useState("");
@@ -143,7 +143,7 @@ const Dashboard = () => {
   const [snifferIface, setSnifferIface] = useState('eth0');
   // Post-Exploit
   const [postExploitOutput, setPostExploitOutput] = useState('');
-  const [postExploitSessions, setPostExploitSessions] = useState([]);
+  const [postExploitSessions] = useState([]);
   const [postExploitOS, setPostExploitOS] = useState('windows');
   // Fuzzer
   const [fuzzResults, setFuzzResults] = useState([]);
@@ -160,11 +160,7 @@ const Dashboard = () => {
   // Bettercap CLI State
   const [bcapStatus, setBcapStatus] = useState({ installed: false, running: false });
   const [manualTarget, setManualTarget] = useState("");
-  const [cliOutput, setCliOutput] = useState([{ text: '═══ NATIVE CAP ENGINE ═══', color: '#a78bfa' }, { text: 'Type "help" for available commands.', color: '#666' }]);
-  const [suggestion, setSuggestion] = useState("");
-  const cliRef = useRef(null);
   const tacticalFeedRef = useRef(null);
-  const inputRef = useRef(null);
   const cmdInputRef = useRef(null);
 
   // ── Productivity Features ──────────────────────────────────────
@@ -190,27 +186,6 @@ const Dashboard = () => {
     EXPLOIT: '#ef4444', INTEL: '#22c55e', CREDS: '#f59e0b', REPORT: '#94a3b8',
   };
 
-  const CLI_COMMANDS = [
-    'net.probe on', 'net.probe off', 'net.recon on', 'net.recon off', 'net.show',
-    'net.sniff on', 'net.sniff off',
-    'arp.spoof on', 'arp.spoof off', 'arp.ban on', 'arp.ban off',
-    'dns.spoof on', 'dns.spoof off',
-    'wifi.recon on', 'wifi.recon off', 'wifi.show', 'wifi.deauth', 'wifi.ap on', 'wifi.ap off',
-    'http.proxy on', 'http.proxy off', 'https.proxy on', 'https.proxy off',
-    'tcp.proxy on', 'tcp.proxy off', 'udp.proxy on', 'udp.proxy off',
-    'syn.scan', 'ble.recon on', 'ble.recon off', 'ble.show',
-    'hid on', 'hid off', 'hid inject',
-    'http.server on', 'http.server off',
-    'mac.changer on', 'mac.changer off',
-    'ticker on', 'ticker off', 'wol',
-    'events.stream on', 'events.stream off', 'events.show',
-    'set arp.spoof.targets', 'set dns.spoof.domains', 'set dns.spoof.address',
-    'set http.proxy.port', 'set wifi.deauth.targets', 'set syn.scan.ports',
-    'set ticker.commands', 'set wifi.ap.ssid',
-    'get *', 'get arp.*', 'get dns.*', 'get wifi.*', 'get http.*',
-    'show', 'active', 'help', 'clear', 'alias'
-  ];
-
   const ws = useRef(null);
 
   // ── Red-ops theme ──────────────────────────────────────────────
@@ -220,12 +195,6 @@ const Dashboard = () => {
   }, [redOpsMode]);
 
   // ── Session persistence ────────────────────────────────────────
-  useEffect(() => {
-    try { const t = localStorage.getItem('moonkeep_target'); if (t) setActiveTarget(JSON.parse(t)); } catch {}
-    try { const p = localStorage.getItem('moonkeep_plugin'); if (p) setActivePlugin(p); } catch {}
-    try { const v = localStorage.getItem('moonkeep_vulns');  if (v) setVulnCards(JSON.parse(v)); } catch {}
-    try { const c = localStorage.getItem('moonkeep_creds');  if (c) setCapturedCreds(JSON.parse(c)); } catch {}
-  }, []);
   useEffect(() => { try { localStorage.setItem('moonkeep_target', JSON.stringify(activeTarget)); } catch {} }, [activeTarget]);
   useEffect(() => { try { localStorage.setItem('moonkeep_plugin', activePlugin); } catch {} }, [activePlugin]);
   useEffect(() => { try { localStorage.setItem('moonkeep_vulns', JSON.stringify(vulnCards.slice(-100))); } catch {} }, [vulnCards]);
@@ -368,49 +337,6 @@ const Dashboard = () => {
     fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/bettercap/status').then(r => r.json()).then(setBcapStatus).catch(() => { });
     return () => clearInterval(pollBcap);
   }, [authFetch]);
-
-  const sendBcapCommand = async (cmd) => {
-    if (!cmd.trim()) return;
-    const newHistory = [cmd, ...bcapHistory.filter(h => h !== cmd)].slice(0, 100);
-    setBcapHistory(newHistory);
-    try { localStorage.setItem('moonkeep_cli_history', JSON.stringify(newHistory)); } catch { }
-    setHistoryIndex(-1);
-    setBcapCmd("");
-    setSuggestion("");
-    setCliOutput(prev => [...prev, { text: `❯ ${cmd}`, color: '#a78bfa', bold: true }]);
-    setStrikeLog(prev => [...prev.slice(-40), `[cap] > ${cmd}`]);
-    try {
-      const res = await fetch((import.meta.env.VITE_API_URL || 'http://localhost:8001') + '/bettercap/command', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cmd })
-      });
-      const data = await res.json();
-      if (data.output === '__CLEAR__') {
-        setCliOutput([{ text: '═══ CLEARED ═══', color: '#a78bfa' }]);
-      } else if (data.output) {
-        const lines = data.output.split('\n').filter(l => l.trim());
-        setCliOutput(prev => [...prev.slice(-200), ...lines.map(l => ({
-          text: l,
-          color: l.includes('→') ? '#22d3ee' : l.includes('error') ? '#f43f5e' : l.includes('═') ? '#a78bfa' : '#94a3b8'
-        }))]);
-      }
-    } catch (err) {
-      setCliOutput(prev => [...prev, { text: '[!] Engine connection failed', color: '#f43f5e' }]);
-      setStrikeLog(prev => [...prev.slice(-40), `[!] CAP: Connection failed`]);
-    }
-    setTimeout(() => cliRef.current?.scrollTo(0, cliRef.current.scrollHeight), 50);
-  };
-
-  const handleCliInput = (val) => {
-    setBcapCmd(val);
-    if (val.length > 1) {
-      const match = CLI_COMMANDS.find(c => c.startsWith(val) && c !== val);
-      setSuggestion(match ? match.slice(val.length) : "");
-    } else {
-      setSuggestion("");
-    }
-  };
 
   // ACTIONS
   const apiCall = async (endpoint, method = 'GET', body = null) => {
@@ -1918,60 +1844,6 @@ const Dashboard = () => {
             </div>
 
             <CapTerminal bcapStatus={bcapStatus} setStrikeLog={setStrikeLog} />
-
-              {/* Terminal Output */}
-              <div
-                ref={cliRef}
-                onClick={() => inputRef.current?.focus()}
-                style={{ flex: 1, overflowY: 'auto', padding: '6px 8px', fontFamily: 'Fira Code, Menlo, monospace', fontSize: '0.68rem', lineHeight: '1.45', cursor: 'text' }}
-              >
-                {cliOutput.map((line, i) => (
-                  <div key={i} style={{ color: line.color || '#94a3b8', fontWeight: line.bold ? 700 : 400, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                    {line.text}
-                  </div>
-                ))}
-              </div>
-
-              {/* Terminal Input */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 8px', borderTop: '1px solid rgba(167,139,250,0.15)', flexShrink: 0, background: 'rgba(0,0,0,0.3)' }}>
-                <span style={{ color: '#22c55e', fontSize: '0.75rem', fontFamily: 'Fira Code, monospace', fontWeight: 700 }}>❯</span>
-                <div style={{ flex: 1, position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', fontFamily: 'Fira Code, monospace', fontSize: '0.75rem', color: 'rgba(167,139,250,0.2)', pointerEvents: 'none', whiteSpace: 'nowrap' }}>
-                    {bcapCmd}{suggestion}
-                  </span>
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={bcapCmd}
-                    onChange={e => handleCliInput(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        sendBcapCommand(bcapCmd);
-                      } else if (e.key === 'Tab') {
-                        e.preventDefault();
-                        if (suggestion) { setBcapCmd(bcapCmd + suggestion); setSuggestion(""); }
-                      } else if (e.key === 'ArrowUp') {
-                        e.preventDefault();
-                        const newIdx = Math.min(historyIndex + 1, bcapHistory.length - 1);
-                        setHistoryIndex(newIdx);
-                        if (bcapHistory[newIdx]) { setBcapCmd(bcapHistory[newIdx]); setSuggestion(""); }
-                      } else if (e.key === 'ArrowDown') {
-                        e.preventDefault();
-                        const newIdx = Math.max(historyIndex - 1, -1);
-                        setHistoryIndex(newIdx);
-                        setBcapCmd(newIdx >= 0 ? bcapHistory[newIdx] : ""); setSuggestion("");
-                      } else if (e.key === 'l' && e.ctrlKey) {
-                        e.preventDefault(); setCliOutput([]);
-                      }
-                    }}
-                    placeholder=""
-                    autoComplete="off"
-                    spellCheck={false}
-                    style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#a78bfa', fontFamily: 'Fira Code, Menlo, monospace', fontSize: '0.75rem', padding: 0, caretColor: '#a78bfa', position: 'relative', zIndex: 1 }}
-                  />
-                </div>
-              </div>
-            </div>
 
             {/* Row 4: Action Button — always pinned at bottom */}
             <button className="btn-primary active" style={{ height: '100%', fontSize: '0.7rem', flexShrink: 0 }} onClick={() => apiCall('/cyber_strike/start', 'POST', { role: cyberStrikeRole })}>INVOKE PROTOCOL</button>

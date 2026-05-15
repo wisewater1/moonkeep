@@ -4,7 +4,7 @@ export default function MeshInjectorPanel({ apiCall }) {
   const [meshActive, setMeshActive] = useState(false);
   const [meshId, setMeshId] = useState('');
   const [meshDiscovered, setMeshDiscovered] = useState([]);
-  const [meshStatus, setMeshStatus] = useState(null);
+  const [meshStatus] = useState(null);
 
   return (
     <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
