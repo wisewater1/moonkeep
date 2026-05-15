@@ -148,9 +148,15 @@ async def lifespan(app: FastAPI):
     cap_engine.inject(plugin_manager, event_queue, target_store)
     pipeline_engine.inject(plugin_manager, target_store, event_queue)
     init_auth_db()
-    asyncio.create_task(broadcast_events())
+    _broadcast_task = asyncio.create_task(broadcast_events())
     _emit({"type": "INFO", "msg": "[SYSTEM] Moonkeep Elite v2 online"})
     yield
+    # Cancel the broadcaster so it doesn't outlive the event loop.
+    _broadcast_task.cancel()
+    try:
+        await _broadcast_task
+    except (asyncio.CancelledError, Exception):
+        pass
     recon_adapter.stop()
     print("[SYSTEM] Moonkeep shutdown complete")
 
