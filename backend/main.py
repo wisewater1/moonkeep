@@ -817,7 +817,10 @@ class ProxyStartBody(BaseModel):
 async def proxy_start(body: ProxyStartBody = ProxyStartBody()):
     plugin = plugin_manager.get_plugin("Proxy")
     if plugin:
-        await plugin.start(port=body.port, script=body.script)
+        try:
+            await plugin.start(port=body.port, script=body.script)
+        except OSError as e:
+            return {"status": "port_unavailable", "port": body.port, "error": str(e)}
         return {"status": "proxy_active", "port": body.port,
                 "ca_cert": getattr(plugin, "_ca_cert", None)}
     return cap_engine.run_command("http.proxy on")
