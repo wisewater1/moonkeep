@@ -2,6 +2,7 @@ import sqlite3
 import os
 import time
 import json
+import html
 from collections import Counter
 from typing import List, Dict, Any, Optional
 

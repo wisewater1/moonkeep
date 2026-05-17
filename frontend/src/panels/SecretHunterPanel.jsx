@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 export default function SecretHunterPanel({ apiCall }) {
-  const [secretFindings, setSecretFindings] = useState([]);
+  const [secretFindings] = useState([]);
 
   return (
     <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>

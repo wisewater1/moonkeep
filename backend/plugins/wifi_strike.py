@@ -103,12 +103,15 @@ class WiFiAttackPlugin(BasePlugin):
                 print(f"[!] WiFi-Strike: EAPOL frame {len(captured)}/4 from {bssid}")
 
         def run_sniff():
-            sniff(
-                iface=self.interface,
-                prn=handle_pkt,
-                stop_filter=lambda _: len(captured) >= 4 or not self.running,
-                timeout=timeout,
-            )
+            try:
+                sniff(
+                    iface=self.interface,
+                    prn=handle_pkt,
+                    stop_filter=lambda _: len(captured) >= 4 or not self.running,
+                    timeout=timeout,
+                )
+            except Exception:
+                pass
             if len(captured) >= 4:
                 filename = os.path.join(
                     self._capture_dir,
@@ -187,12 +190,15 @@ class WiFiAttackPlugin(BasePlugin):
                     captured.append(pkt)
                     self.emit("EAPOL_FRAME", {"bssid": bssid, "frame": len(captured)})
 
-            sniff(
-                iface=self.interface,
-                prn=_pkt,
-                stop_filter=lambda _: len(captured) >= 4 or done_event.is_set(),
-                timeout=timeout,
-            )
+            try:
+                sniff(
+                    iface=self.interface,
+                    prn=_pkt,
+                    stop_filter=lambda _: len(captured) >= 4 or done_event.is_set(),
+                    timeout=timeout,
+                )
+            except Exception:
+                pass
 
             if len(captured) >= 4:
                 fname = os.path.join(

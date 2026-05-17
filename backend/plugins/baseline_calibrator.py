@@ -79,13 +79,19 @@ class BaselineCalibratorPlugin(BasePlugin):
                         with self._lock:
                             self._window.append({"t": "syn", "ts": ts})
 
+        def _safe_sniff():
+            try:
+                sniff(
+                    iface=interface,
+                    prn=_pkt,
+                    stop_filter=lambda _: done.is_set() or not self.running,
+                    timeout=observe_secs + 5,
+                )
+            except Exception:
+                pass
+
         sniff_thread = threading.Thread(
-            target=lambda: sniff(
-                iface=interface,
-                prn=_pkt,
-                stop_filter=lambda _: done.is_set() or not self.running,
-                timeout=observe_secs + 5,
-            ),
+            target=_safe_sniff,
             daemon=True,
         )
         sniff_thread.start()

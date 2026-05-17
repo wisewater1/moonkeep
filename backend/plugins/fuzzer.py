@@ -3,6 +3,8 @@ from scapy.all import IP, UDP, SNMP, SNMPget, SNMPvarbind, ASN1_OID, send, Raw, 
 import asyncio
 import struct
 import os
+import threading
+import time
 
 class FuzzerPlugin(BasePlugin):
     def __init__(self):
@@ -116,3 +118,32 @@ class FuzzerPlugin(BasePlugin):
 
         threading.Thread(target=_run, daemon=True).start()
         return {"status": "MDNS Fuzzing Active", "target": target_ip, "mutations": len(mutations)}
+
+    async def fuzz_upnp(self, target_ip, iterations=100):
+        """Send malformed UPnP M-SEARCH and NOTIFY packets."""
+        print(f"Fuzzer: UPnP fuzzing {target_ip}")
+
+        def _run():
+            ssdp_mutations = [
+                b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 0\r\nST: ssdp:all\r\n\r\n",
+                b"M-SEARCH * HTTP/1.1\r\nHOST: " + b"A" * 500 + b"\r\nMAN: \"\"\r\nMX: -1\r\nST: \r\n\r\n",
+                b"NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nNTS: ssdp:alive\r\nUSN: " + b"\x00" * 200 + b"\r\n\r\n",
+            ]
+            for i in range(min(iterations, 100)):
+                if not self.running:
+                    break
+                try:
+                    pkt = (IP(dst=target_ip) /
+                           UDP(sport=RandShort(), dport=1900) /
+                           Raw(load=ssdp_mutations[i % len(ssdp_mutations)]))
+                    send(pkt, verbose=False)
+                    self.stats["upnp_sent"] = self.stats.get("upnp_sent", 0) + 1
+                except Exception:
+                    self.stats["errors"] += 1
+                time.sleep(0.05)
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"status": "UPnP Fuzzing Active", "target": target_ip, "iterations": iterations}
+
+    def get_stats(self) -> dict:
+        return {"stats": self.stats, "running": self.running}

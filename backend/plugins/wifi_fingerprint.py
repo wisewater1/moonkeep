@@ -86,12 +86,15 @@ class WiFiFingerprinterPlugin(BasePlugin):
                         if len(sess["eapol_times"]) >= 4:
                             done.set()
 
-            sniff(
-                iface=self.interface,
-                prn=_pkt,
-                stop_filter=lambda _: done.is_set() or not self.running,
-                timeout=timeout,
-            )
+            try:
+                sniff(
+                    iface=self.interface,
+                    prn=_pkt,
+                    stop_filter=lambda _: done.is_set() or not self.running,
+                    timeout=timeout,
+                )
+            except Exception:
+                pass
             done.set()
 
         t = threading.Thread(target=_sniff, daemon=True)

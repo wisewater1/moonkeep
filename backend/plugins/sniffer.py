@@ -10,6 +10,8 @@ class SnifferPlugin(BasePlugin):
     def __init__(self):
         self.sniffer = None
         self.credentials: list = []
+        self.dns_log: list = []
+        self.packet_count: int = 0
 
     @property
     def name(self) -> str:
@@ -49,6 +51,7 @@ class SnifferPlugin(BasePlugin):
         }
 
         if Raw not in pkt:
+            self.packet_count += 1
             self.emit("PACKET", summary)
             return
 
@@ -192,3 +195,6 @@ class SnifferPlugin(BasePlugin):
         ):
             creds.append(f"GENERIC-PASS:{m.group(1)[:60]}")
         return creds
+
+    def get_dns_log(self) -> list:
+        return self.dns_log
