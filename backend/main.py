@@ -1244,6 +1244,11 @@ async def websocket_endpoint(websocket: WebSocket):
         connected_clients.discard(websocket)
 
 
+_static_dir = os.environ.get("MOONKEEP_STATIC_DIR", "")
+if _static_dir and os.path.isdir(_static_dir):
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=_static_dir, html=True), name="frontend")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
