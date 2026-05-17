@@ -66,7 +66,7 @@ class ScannerPlugin(BasePlugin):
 
         # ARP scan with retries (3 attempts, increasing timeout)
         for attempt in range(3):
-            timeout = 3 + attempt * 2  # 3s, 5s, 7s
+            timeout = 2 + attempt  # 2s, 3s, 4s — total max 9s so teardown can finish cleanly
             found = self._arp_scan(target_ip, timeout=timeout)
             if found:
                 devices.extend(found)
@@ -100,7 +100,7 @@ class ScannerPlugin(BasePlugin):
             arp = ARP(pdst=target_ip)
             ether = Ether(dst="ff:ff:ff:ff:ff:ff")
             packet = ether / arp
-            result = srp(packet, timeout=timeout, verbose=0, retry=2)[0]
+            result = srp(packet, timeout=timeout, verbose=0, retry=0)[0]
             return [{'ip': rcv.psrc, 'mac': rcv.hwsrc} for _, rcv in result]
         except Exception as e:
             print(f"Scapy ARP scan failed: {e}")

@@ -94,6 +94,16 @@ cap_engine = NativeCapEngine()
 connected_clients: set[WebSocket] = set()
 pipeline_engine = PipelineEngine()
 
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> asyncio.Task:
+    """Create and track a background task; auto-removed on completion."""
+    t = asyncio.create_task(coro)
+    _background_tasks.add(t)
+    t.add_done_callback(_background_tasks.discard)
+    return t
+
 
 async def broadcast_events():
     while True:
@@ -107,7 +117,7 @@ async def broadcast_events():
         for dead in dead_clients:
             connected_clients.discard(dead)
         # Forward every event to the pipeline engine for automated chaining
-        asyncio.create_task(pipeline_engine.process_event(event))
+        _spawn(pipeline_engine.process_event(event))
 
 
 # Force discovery of all Elite modules
@@ -143,6 +153,7 @@ async def lifespan(app: FastAPI):
     # Reinitialize per event-loop so TestClient restarts don't get
     # "bound to a different event loop" errors from the module-level queue.
     event_queue = asyncio.Queue(maxsize=1000)
+    _background_tasks.clear()
     for plugin in plugin_manager.plugins.values():
         plugin.event_queue = event_queue
     cap_engine.inject(plugin_manager, event_queue, target_store)
@@ -157,15 +168,14 @@ async def lifespan(app: FastAPI):
         await _broadcast_task
     except (asyncio.CancelledError, Exception):
         pass
-    # Cancel any remaining tasks spawned by route handlers (e.g. capture_handshake,
-    # pipeline engine processing) so the event loop closes cleanly without
-    # "Task destroyed but pending" RuntimeError noise that causes exit-code 1 in CI.
-    _current = asyncio.current_task()
-    _pending = {t for t in asyncio.all_tasks() if t is not _current and not t.done()}
-    for _t in _pending:
-        _t.cancel()
-    if _pending:
-        await asyncio.gather(*_pending, return_exceptions=True)
+    # Cancel only our tracked background tasks — never Starlette/anyio infrastructure,
+    # which would prevent TestClient teardown from completing.
+    _owned = {t for t in _background_tasks if not t.done()}
+    for t in _owned:
+        t.cancel()
+    if _owned:
+        await asyncio.gather(*_owned, return_exceptions=True)
+    _background_tasks.clear()
     recon_adapter.stop()
     print("[SYSTEM] Moonkeep shutdown complete")
 
@@ -542,7 +552,7 @@ async def wifi_capture_passive(body: CapturePassiveBody):
     plugin = plugin_manager.get_plugin("WiFi-Strike")
     if not plugin:
         raise HTTPException(status_code=404, detail="WiFi-Strike plugin not found")
-    asyncio.create_task(plugin.capture_handshake(body.bssid))
+    _spawn(plugin.capture_handshake(body.bssid))
     return {"message": f"Listening for handshake on {body.bssid}", "bssid": body.bssid}
 
 
@@ -613,7 +623,7 @@ async def vulnerability_scan(target: str = None):
         if orchestrator and results:
             orchestrator.ingest_vuln_results(target, results)
 
-    asyncio.create_task(_scan_and_ingest())
+    _spawn(_scan_and_ingest())
     return {"status": "Vulnerability scan launched", "target": target}
 
 @app.get("/vuln_scan/results")
@@ -634,7 +644,7 @@ class CyberStrikeBody(BaseModel):
 async def cyber_strike_start(body: CyberStrikeBody):
     plugin = plugin_manager.get_plugin("Cyber-Strike")
     if plugin:
-        asyncio.create_task(plugin.start(role=body.role, plugin_manager=plugin_manager))
+        _spawn(plugin.start(role=body.role, plugin_manager=plugin_manager))
     return {"status": f"Invoked {body.role}"}
 
 
@@ -676,7 +686,7 @@ class AIExecuteBody(BaseModel):
 async def ai_execute(body: AIExecuteBody):
     plugin = plugin_manager.get_plugin("AI-Orchestrator")
     if plugin:
-        asyncio.create_task(plugin.execute_plan(body.plan, plugin_manager))
+        _spawn(plugin.execute_plan(body.plan, plugin_manager))
     return {"status": "Executing Sequence"}
 
 
@@ -715,7 +725,7 @@ async def pe_exfiltrate(body: ExfilBody):
         f"session_{target_store.devices[0].get('ip', '').replace('.', '_')}"
         if target_store.devices else "local"
     )
-    asyncio.create_task(plugin.exfiltrate_secrets(session_id))
+    _spawn(plugin.exfiltrate_secrets(session_id))
     return {"status": "Exfiltration Launched", "session_id": session_id}
 
 
@@ -889,7 +899,7 @@ class AutoAttackBody(BaseModel):
 async def wifi_auto_attack(body: AutoAttackBody):
     p = plugin_manager.get_plugin("WiFi-Strike")
     if not p: raise HTTPException(status_code=404, detail="WiFi-Strike plugin not found")
-    asyncio.create_task(p.auto_attack(bssid=body.bssid, clients=body.clients, timeout=body.timeout))
+    _spawn(p.auto_attack(bssid=body.bssid, clients=body.clients, timeout=body.timeout))
     return {"status": "auto_attack_launched", "bssid": body.bssid}
 
 # ─── OPTION A/B: Rogue AP (captive portal + transparent bridge) ───────────────
@@ -961,7 +971,7 @@ async def cred_spray_run(body: SprayBody):
         plugin.add_credential(body.credential)
     if body.target_ip:
         plugin.add_target(body.target_ip, [22, 21, 80, 443, 8080, 3306, 5432, 6379])
-    asyncio.create_task(plugin.run_spray())
+    _spawn(plugin.run_spray())
     return {"status": "spray_launched",
             "credentials": len(plugin._credential_pool),
             "targets": len(plugin._targets)}
@@ -1006,7 +1016,7 @@ class WebScanBody(BaseModel):
 async def web_scan(body: WebScanBody):
     plugin = plugin_manager.get_plugin("Web-Scanner")
     if not plugin: raise HTTPException(status_code=404, detail="Web-Scanner not found")
-    asyncio.create_task(plugin.scan(body.host, body.port, body.https))
+    _spawn(plugin.scan(body.host, body.port, body.https))
     return {"status": "scan_launched", "host": body.host, "port": body.port}
 
 @app.get("/web_scanner/findings")
@@ -1027,11 +1037,11 @@ async def hash_crack(body: CrackBody):
     plugin = plugin_manager.get_plugin("Hash-Cracker")
     if not plugin: raise HTTPException(status_code=404, detail="Hash-Cracker not found")
     if body.hash:
-        asyncio.create_task(plugin.crack_hash(body.hash))
+        _spawn(plugin.crack_hash(body.hash))
     elif body.shadow_path:
-        asyncio.create_task(plugin.crack_shadow(body.shadow_path))
+        _spawn(plugin.crack_shadow(body.shadow_path))
     elif body.pcap_path:
-        asyncio.create_task(plugin.crack_pcap(body.pcap_path, body.bssid or ""))
+        _spawn(plugin.crack_pcap(body.pcap_path, body.bssid or ""))
     else:
         raise HTTPException(status_code=400, detail="Provide hash, shadow_path, or pcap_path")
     return {"status": "crack_launched"}
@@ -1054,7 +1064,7 @@ async def osint_enrich(ip: str):
 async def osint_enrich_all():
     plugin = plugin_manager.get_plugin("OSINT-Enricher")
     if not plugin: raise HTTPException(status_code=404)
-    asyncio.create_task(plugin.enrich_batch(target_store.devices))
+    _spawn(plugin.enrich_batch(target_store.devices))
     return {"status": "enrichment_launched", "hosts": len(target_store.devices)}
 
 # ─── REPORT BUILDER ──────────────────────────────────────────────────
@@ -1092,7 +1102,7 @@ async def wifi_fp_start(iface: str = "wlan0"):
 async def wifi_fp_run(body: FingerprintBody):
     p = plugin_manager.get_plugin("WiFi-Fingerprinter")
     if not p: raise HTTPException(status_code=404, detail="WiFi-Fingerprinter not found")
-    asyncio.create_task(p.fingerprint_ap(body.bssid, body.timeout))
+    _spawn(p.fingerprint_ap(body.bssid, body.timeout))
     return {"status": "fingerprinting", "bssid": body.bssid}
 
 @app.get("/wifi_fingerprint/profiles")
@@ -1160,7 +1170,7 @@ class MeshStartBody(BaseModel):
 async def mesh_start(body: MeshStartBody):
     p = plugin_manager.get_plugin("Mesh-Injector")
     if not p: raise HTTPException(status_code=404, detail="Mesh-Injector not found")
-    asyncio.create_task(p.start(**body.model_dump()))
+    _spawn(p.start(**body.model_dump()))
     return {"status": "mesh_injection_starting", "mesh_id": body.mesh_id}
 
 @app.post("/mesh/stop")
