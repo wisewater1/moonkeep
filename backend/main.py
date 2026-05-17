@@ -157,6 +157,15 @@ async def lifespan(app: FastAPI):
         await _broadcast_task
     except (asyncio.CancelledError, Exception):
         pass
+    # Cancel any remaining tasks spawned by route handlers (e.g. capture_handshake,
+    # pipeline engine processing) so the event loop closes cleanly without
+    # "Task destroyed but pending" RuntimeError noise that causes exit-code 1 in CI.
+    _current = asyncio.current_task()
+    _pending = {t for t in asyncio.all_tasks() if t is not _current and not t.done()}
+    for _t in _pending:
+        _t.cancel()
+    if _pending:
+        await asyncio.gather(*_pending, return_exceptions=True)
     recon_adapter.stop()
     print("[SYSTEM] Moonkeep shutdown complete")
 
