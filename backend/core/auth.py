@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import os
+import sys
 import time
 import sqlite3
 import secrets
@@ -15,6 +16,9 @@ SECRET_KEY = os.environ.get("MOONKEEP_SECRET_KEY", secrets.token_hex(32))
 TOKEN_EXPIRY = int(os.environ.get("MOONKEEP_TOKEN_EXPIRY", "86400"))
 AUTH_DB = os.environ.get("MOONKEEP_AUTH_DB", "moonkeep_auth.db")
 ALGORITHM = "HS256"
+DEFAULT_PASSWORD_FILE = os.environ.get(
+    "MOONKEEP_INITIAL_PASSWORD_FILE", "/var/lib/moonkeep/initial-password.txt"
+)
 
 security = HTTPBearer(auto_error=False)
 
@@ -45,12 +49,51 @@ def init_auth_db():
         )""")
         count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         if count == 0:
-            pw_hash = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
+            password = _resolve_initial_admin_password()
+            pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
             conn.execute(
                 "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
                 ("admin", pw_hash, "admin", time.time()),
             )
-            print("[AUTH] Default admin user created (username: admin, password: admin)")
+
+
+def _resolve_initial_admin_password() -> str:
+    """Pick the initial admin password.
+
+    Priority:
+      1. MOONKEEP_ADMIN_PASSWORD env var (tests + scripted installs use this).
+      2. Random secrets.token_urlsafe(16), persisted to DEFAULT_PASSWORD_FILE
+         with mode 0600 and announced once on stderr.
+    """
+    explicit = os.environ.get("MOONKEEP_ADMIN_PASSWORD")
+    if explicit:
+        print(
+            "[AUTH] Default admin user created (password from MOONKEEP_ADMIN_PASSWORD)",
+            file=sys.stderr,
+        )
+        return explicit
+
+    password = secrets.token_urlsafe(16)
+    try:
+        os.makedirs(os.path.dirname(DEFAULT_PASSWORD_FILE) or ".", exist_ok=True)
+        # O_CREAT|O_WRONLY|O_TRUNC + 0o600 — never world-readable.
+        fd = os.open(DEFAULT_PASSWORD_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(password + "\n")
+        print(
+            f"[AUTH] Default admin user created with RANDOM password — read it from "
+            f"{DEFAULT_PASSWORD_FILE} (mode 0600)",
+            file=sys.stderr,
+        )
+    except OSError as exc:
+        # Fall back to stderr-only if the path isn't writable (e.g. unprivileged
+        # local dev). The password is still secure, just less discoverable.
+        print(
+            f"[AUTH] Could not write {DEFAULT_PASSWORD_FILE} ({exc}). "
+            f"Initial admin password: {password}",
+            file=sys.stderr,
+        )
+    return password
 
 
 def create_user(username: str, password: str, role: str = "operator") -> dict:

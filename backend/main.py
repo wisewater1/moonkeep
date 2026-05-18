@@ -17,6 +17,7 @@ from core.auth import (
     list_users, delete_user, get_audit_log,
 )
 import os
+import sys
 import time
 import socket
 import asyncio
@@ -70,24 +71,41 @@ campaign_manager = CampaignManager()
 target_store = TargetStore(campaign_manager)
 event_queue = asyncio.Queue(maxsize=1000)
 
+# Drop counter — surfaced via /metrics so operators can see backpressure.
+_event_drops: int = 0
+_last_drop_warn_ts: float = 0.0
+
 
 def _emit(event):
+    global _event_drops, _last_drop_warn_ts
     try:
         event_queue.put_nowait(event)
     except asyncio.QueueFull:
-        pass
+        _event_drops += 1
+        # Rate-limit the stderr warning to once per 10s so we don't spam.
+        now = time.time()
+        if now - _last_drop_warn_ts > 10:
+            _last_drop_warn_ts = now
+            print(
+                f"[EVENT_QUEUE] Backpressure: dropped {_event_drops} events total "
+                f"(queue full at maxsize={event_queue.maxsize})",
+                file=sys.stderr,
+            )
     if isinstance(event, dict) and event.get("plugin"):
         try:
             campaign_manager.record_timeline(
                 target_store.active_campaign,
                 event.get("plugin", "system"),
                 event.get("type", "INFO"),
-                event.get("data", {}).get("target", ""),
-                str(event.get("data", {}).get("msg", ""))[:200],
+                event.get("data", {}).get("target", "")
+                if isinstance(event.get("data"), dict) else "",
+                str(event.get("data", {}).get("msg", ""))[:200]
+                if isinstance(event.get("data"), dict) else "",
                 event.get("type", "INFO"),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            # Don't crash on timeline write — but make the failure visible.
+            print(f"[TIMELINE] record_timeline failed: {exc}", file=sys.stderr)
 
 
 cap_engine = NativeCapEngine()
@@ -430,6 +448,9 @@ async def global_metrics():
     metrics = campaign_manager.get_metrics(active)
     metrics["active_plugins"] = len(plugin_manager.plugins)
     metrics["cap_modules"] = len(cap_engine.active_modules)
+    metrics["event_queue_size"] = event_queue.qsize()
+    metrics["event_queue_max"] = event_queue.maxsize
+    metrics["event_drops_total"] = _event_drops
     return metrics
 
 
