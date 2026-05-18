@@ -188,17 +188,19 @@ async def lifespan(app: FastAPI):
         pass
     # Cancel ALL of our application-level tasks — both the ones tracked via
     # _spawn() and any spawned directly via asyncio.create_task() inside
-    # plugins/* and core/*. Starlette/anyio infrastructure tasks live in
-    # different modules (anyio, starlette, fastapi, uvicorn) and must be left
-    # alone — cancelling them deadlocks the TestClient teardown.
+    # plugins/* and core/*. Coroutine objects don't carry __module__; we
+    # identify "ours" by the source filename on cr_code/gi_code, which lives
+    # under .../backend/ both locally and in CI. Starlette/anyio/uvicorn
+    # tasks resolve to site-packages paths and are left alone — cancelling
+    # them deadlocks the TestClient teardown.
     _current = asyncio.current_task()
     _owned = set(_background_tasks)
     for t in asyncio.all_tasks():
         if t is _current or t.done() or t in _owned:
             continue
         coro = t.get_coro()
-        mod = getattr(coro, "__module__", "") or ""
-        if mod == "main" or mod.startswith(("core.", "plugins.")):
+        code = getattr(coro, "cr_code", None) or getattr(coro, "gi_code", None)
+        if code and "/backend/" in code.co_filename:
             _owned.add(t)
     _owned = {t for t in _owned if not t.done()}
     for t in _owned:
