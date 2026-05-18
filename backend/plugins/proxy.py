@@ -43,9 +43,9 @@ class ProxyPlugin(BasePlugin):
                      "-keyout", ca_key, "-out", ca_cert,
                      "-days", "3650", "-nodes",
                      "-subj", "/CN=Moonkeep MITM CA/O=Moonkeep"],
-                    check=True, capture_output=True, timeout=30,
+                    check=True, capture_output=True,
                 )
-            except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            except (FileNotFoundError, subprocess.CalledProcessError):
                 return
         self._ca_key  = ca_key
         self._ca_cert = ca_cert
@@ -64,7 +64,7 @@ class ProxyPlugin(BasePlugin):
                     ["openssl", "req", "-newkey", "rsa:2048", "-keyout", h_key,
                      "-out", csr, "-nodes",
                      "-subj", f"/CN={hostname}"],
-                    check=True, capture_output=True, timeout=30,
+                    check=True, capture_output=True,
                 )
                 subprocess.run(
                     ["openssl", "x509", "-req", "-in", csr,
@@ -73,9 +73,9 @@ class ProxyPlugin(BasePlugin):
                      "-days", "365", "-sha256",
                      "-extfile", "/dev/stdin"],
                     input=f"subjectAltName=DNS:{hostname}",
-                    text=True, check=True, capture_output=True, timeout=30,
+                    text=True, check=True, capture_output=True,
                 )
-            except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            except (FileNotFoundError, subprocess.CalledProcessError):
                 return None
         return h_cert, h_key
 

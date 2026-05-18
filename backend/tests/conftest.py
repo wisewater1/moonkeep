@@ -12,9 +12,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _auth_tmp = tempfile.NamedTemporaryFile(suffix="_auth.db", delete=False)
 _campaign_tmp = tempfile.NamedTemporaryFile(suffix="_campaigns.db", delete=False)
 os.environ["MOONKEEP_AUTH_DB"] = _auth_tmp.name
-# Pin the initial admin password for the suite — without this, init_auth_db()
-# generates a random one and tests can't predict it.
-os.environ.setdefault("MOONKEEP_ADMIN_PASSWORD", "admin")
 _auth_tmp.close()
 _campaign_tmp.close()
 
