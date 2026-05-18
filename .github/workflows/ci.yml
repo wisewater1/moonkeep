@@ -36,7 +36,26 @@ jobs:
       - name: Run tests
         run: |
           cd backend
-          python -m pytest -v
+          set -o pipefail
+          python -m pytest -v 2>&1 | tee /tmp/test_output.log
+
+      - name: Surface failure details
+        if: failure()
+        run: |
+          echo "=== LAST 120 LINES OF TEST OUTPUT ==="
+          tail -120 /tmp/test_output.log || true
+          echo ""
+          echo "=== FAIL/ERROR LINES ==="
+          grep -E "^(FAILED|ERROR|tests/.*FAILED|tests/.*ERROR| *Traceback|RuntimeError|AssertionError|.*Event loop is closed)" /tmp/test_output.log | head -40 || echo "(no matches)"
+          echo ""
+          echo "=== SUMMARY LINE ==="
+          tail -3 /tmp/test_output.log || true
+          # Emit each error line as a GitHub annotation so it's visible in the run UI.
+          grep -E "^(FAILED|ERROR|.*RuntimeError|.*AssertionError|.*Event loop is closed)" /tmp/test_output.log | head -10 | while IFS= read -r line; do
+            # Strip ANSI codes so the annotation reads cleanly.
+            clean=$(printf '%s' "$line" | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' | head -c 400)
+            printf '::error::%s\n' "$clean"
+          done || true
 
   frontend-build:
     name: Frontend Build
