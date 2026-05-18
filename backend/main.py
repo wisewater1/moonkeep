@@ -186,27 +186,31 @@ async def lifespan(app: FastAPI):
         await _broadcast_task
     except (asyncio.CancelledError, Exception):
         pass
-    # Cancel ALL of our application-level tasks — both the ones tracked via
-    # _spawn() and any spawned directly via asyncio.create_task() inside
-    # plugins/* and core/*. Coroutine objects don't carry __module__; we
-    # identify "ours" by the source filename on cr_code/gi_code, which lives
-    # under .../backend/ both locally and in CI. Starlette/anyio/uvicorn
-    # tasks resolve to site-packages paths and are left alone — cancelling
-    # them deadlocks the TestClient teardown.
-    _current = asyncio.current_task()
-    _owned = set(_background_tasks)
-    for t in asyncio.all_tasks():
-        if t is _current or t.done() or t in _owned:
-            continue
-        coro = t.get_coro()
-        code = getattr(coro, "cr_code", None) or getattr(coro, "gi_code", None)
-        if code and "/backend/" in code.co_filename:
-            _owned.add(t)
-    _owned = {t for t in _owned if not t.done()}
-    for t in _owned:
-        t.cancel()
-    if _owned:
-        await asyncio.gather(*_owned, return_exceptions=True)
+    # Cancel application-level tasks in waves. Cancelling a parent task
+    # leaves any inner asyncio.create_task() children orphaned (they keep
+    # running on the loop), so we re-scan and cancel until the wave is
+    # empty. "Ours" is identified by the coroutine source filename, which
+    # lives under .../backend/ both locally and in CI. Starlette/anyio/
+    # uvicorn tasks resolve to site-packages paths and are left alone —
+    # cancelling them deadlocks the TestClient teardown.
+    for _ in range(5):  # bounded waves to avoid pathological loops
+        _current = asyncio.current_task()
+        pending = set()
+        for t in asyncio.all_tasks():
+            if t is _current or t.done():
+                continue
+            if t in _background_tasks:
+                pending.add(t)
+                continue
+            coro = t.get_coro()
+            code = getattr(coro, "cr_code", None) or getattr(coro, "gi_code", None)
+            if code and "/backend/" in code.co_filename:
+                pending.add(t)
+        if not pending:
+            break
+        for t in pending:
+            t.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
     _background_tasks.clear()
     recon_adapter.stop()
     print("[SYSTEM] Moonkeep shutdown complete")
