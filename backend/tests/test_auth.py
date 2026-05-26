@@ -210,3 +210,36 @@ def test_register_operator_cannot_register(client, auth_headers):
             headers=op_headers,
         )
         assert resp.status_code == 403
+
+
+# ── WebSocket authentication ─────────────────────────────────────
+
+def test_ws_event_stream_rejects_no_token(client):
+    """The /ws event firehose must require a valid token."""
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect("/ws"):
+            pass
+    assert exc_info.value.code == 4401
+
+
+def test_ws_event_stream_rejects_bad_token(client):
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect("/ws?token=garbage"):
+            pass
+    assert exc_info.value.code == 4401
+
+
+def test_ws_event_stream_accepts_valid_token(client, auth_token):
+    with client.websocket_connect(f"/ws?token={auth_token}") as ws:
+        # Connection accepted — closing immediately is fine.
+        ws.close()
+
+
+def test_ws_recon_rejects_no_token(client):
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect("/ws/recon"):
+            pass
+    assert exc_info.value.code == 4401

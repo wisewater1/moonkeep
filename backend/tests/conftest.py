@@ -8,6 +8,15 @@ import pytest
 # Ensure the backend package root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Pin auth knobs BEFORE importing auth so the module-level SECRET_KEY +
+# initial-password logic is deterministic. Without this:
+#   - SECRET_KEY would persist to /var/lib/moonkeep on a dev box, or
+#     generate per-process and invalidate tokens between test runs.
+#   - init_auth_db() would generate a random admin password and tests
+#     couldn't authenticate.
+os.environ.setdefault("MOONKEEP_SECRET_KEY", "test-secret-key-do-not-use-in-prod")
+os.environ.setdefault("MOONKEEP_ADMIN_PASSWORD", "admin")
+
 # Point auth + campaign DBs at temp files BEFORE importing anything else
 _auth_tmp = tempfile.NamedTemporaryFile(suffix="_auth.db", delete=False)
 _campaign_tmp = tempfile.NamedTemporaryFile(suffix="_campaigns.db", delete=False)
