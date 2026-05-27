@@ -162,6 +162,7 @@ const Dashboard = () => {
   const [manualTarget, setManualTarget] = useState("");
   const tacticalFeedRef = useRef(null);
   const cmdInputRef = useRef(null);
+  const cmdListRef = useRef(null);
 
   // ── Productivity Features ──────────────────────────────────────
   const [cmdOpen, setCmdOpen]           = useState(false);
@@ -229,6 +230,11 @@ const Dashboard = () => {
   }, []);
 
   useEffect(() => { if (cmdOpen) setTimeout(() => cmdInputRef.current?.focus(), 30); }, [cmdOpen]);
+  useEffect(() => {
+    if (!cmdOpen) return;
+    const el = cmdListRef.current?.querySelector('[data-cmd-selected="true"]');
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [cmdOpen, cmdSelected, cmdQuery]);
 
   const toggleFav = useCallback((name) => {
     setFavPlugins(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
@@ -1690,9 +1696,8 @@ const Dashboard = () => {
                         <span style={{ flex: 1 }}>{cat}</span>
                         <span className="nav-category-count" aria-label={`${available.length} modules`}>{available.length}</span>
                       </button>
-                      {!isCollapsed && (
-                        <div id={`navcat-${cat}`}>
-                          {available.map(p => {
+                      <div id={`navcat-${cat}`} hidden={isCollapsed}>
+                        {available.map(p => {
                             const badge = pluginFindings[p.name];
                             const isLive = (p.name === 'Sniffer' && snifferActive) ||
                               (p.name === 'Rogue-AP' && rogueAPActive) ||
@@ -1726,8 +1731,7 @@ const Dashboard = () => {
                               </div>
                             );
                           })}
-                        </div>
-                      )}
+                      </div>
                     </div>
                   );
                 })}
@@ -2018,7 +2022,9 @@ const Dashboard = () => {
                 placeholder="Search modules, actions…"
                 style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'white', fontFamily: 'Fira Code, monospace', fontSize: '0.85rem' }}
                 onKeyDown={e => {
-                  if (e.key === 'Escape') { setCmdOpen(false); }
+                  // Stop bubbling so the global Escape handler doesn't also
+                  // clear the split panel when the user dismisses the palette.
+                  if (e.key === 'Escape') { e.stopPropagation(); setCmdOpen(false); }
                   else if (e.key === 'ArrowDown') { e.preventDefault(); setCmdSelected(s => Math.min(s + 1, Math.max(items.length - 1, 0))); }
                   else if (e.key === 'ArrowUp')   { e.preventDefault(); setCmdSelected(s => Math.max(s - 1, 0)); }
                   else if (e.key === 'Home')      { e.preventDefault(); setCmdSelected(0); }
@@ -2028,7 +2034,7 @@ const Dashboard = () => {
               />
               <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>↑↓ · ↵ · ESC</span>
             </div>
-            <div style={{ maxHeight: '360px', overflowY: 'auto', padding: '0.4rem 0' }}>
+            <div ref={cmdListRef} style={{ maxHeight: '360px', overflowY: 'auto', padding: '0.4rem 0' }}>
               {items.length === 0 && (
                 <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
                   No matches for &ldquo;{cmdQuery}&rdquo;
@@ -2039,6 +2045,7 @@ const Dashboard = () => {
                 if (it.kind === 'action') {
                   return (
                     <div key={`a-${it.label}`}
+                      data-cmd-selected={isSel || undefined}
                       className={`cmd-item cmd-action ${isSel ? 'cmd-item-active' : ''}`}
                       onMouseEnter={() => setCmdSelected(i)}
                       onClick={() => exec(i)}>
@@ -2053,6 +2060,7 @@ const Dashboard = () => {
                 const isFav = favPlugins.includes(p.name);
                 return (
                   <div key={`m-${p.name}`}
+                    data-cmd-selected={isSel || undefined}
                     className={`cmd-item ${isSel ? 'cmd-item-active' : ''}`}
                     onMouseEnter={() => setCmdSelected(i)}
                     onClick={() => exec(i)}>
