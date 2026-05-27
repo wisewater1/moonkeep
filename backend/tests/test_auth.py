@@ -210,3 +210,34 @@ def test_register_operator_cannot_register(client, auth_headers):
             headers=op_headers,
         )
         assert resp.status_code == 403
+
+
+# ── WebSocket authentication ─────────────────────────────────────
+# Endpoints accept the handshake first, then close with code 4401 if the
+# token is missing or invalid. (Closing pre-accept would send HTTP 403,
+# which JS clients can't read the reason from.) So the rejection surfaces
+# on the first recv(), not on connect().
+
+def _assert_ws_unauthorized(client, url):
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(url) as ws:
+            ws.receive_text()
+    assert exc_info.value.code == 4401, f"expected 4401, got {exc_info.value.code}"
+
+
+def test_ws_event_stream_rejects_no_token(client):
+    _assert_ws_unauthorized(client, "/ws")
+
+
+def test_ws_event_stream_rejects_bad_token(client):
+    _assert_ws_unauthorized(client, "/ws?token=garbage")
+
+
+def test_ws_event_stream_accepts_valid_token(client, auth_token):
+    with client.websocket_connect(f"/ws?token={auth_token}") as ws:
+        ws.close()
+
+
+def test_ws_recon_rejects_no_token(client):
+    _assert_ws_unauthorized(client, "/ws/recon")

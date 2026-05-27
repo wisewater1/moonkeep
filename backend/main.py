@@ -17,6 +17,7 @@ from core.auth import (
     list_users, delete_user, get_audit_log,
 )
 import os
+import sys
 import time
 import socket
 import asyncio
@@ -70,24 +71,38 @@ campaign_manager = CampaignManager()
 target_store = TargetStore(campaign_manager)
 event_queue = asyncio.Queue(maxsize=1000)
 
+# Backpressure counter — surfaced via /metrics.
+_event_drops: int = 0
+_last_drop_warn_ts: float = 0.0
+
 
 def _emit(event):
+    global _event_drops, _last_drop_warn_ts
     try:
         event_queue.put_nowait(event)
     except asyncio.QueueFull:
-        pass
+        _event_drops += 1
+        now = time.time()
+        if now - _last_drop_warn_ts > 10:
+            _last_drop_warn_ts = now
+            print(
+                f"[EVENT_QUEUE] Backpressure: dropped {_event_drops} events total "
+                f"(queue full at maxsize={event_queue.maxsize})",
+                file=sys.stderr,
+            )
     if isinstance(event, dict) and event.get("plugin"):
         try:
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
             campaign_manager.record_timeline(
                 target_store.active_campaign,
                 event.get("plugin", "system"),
                 event.get("type", "INFO"),
-                event.get("data", {}).get("target", ""),
-                str(event.get("data", {}).get("msg", ""))[:200],
+                data.get("target", ""),
+                str(data.get("msg", ""))[:200],
                 event.get("type", "INFO"),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[TIMELINE] record_timeline failed: {exc}", file=sys.stderr)
 
 
 cap_engine = NativeCapEngine()
@@ -168,23 +183,67 @@ async def lifespan(app: FastAPI):
         await _broadcast_task
     except (asyncio.CancelledError, Exception):
         pass
-    # Cancel only our tracked background tasks — never Starlette/anyio infrastructure,
-    # which would prevent TestClient teardown from completing.
-    _owned = {t for t in _background_tasks if not t.done()}
-    for t in _owned:
-        t.cancel()
-    if _owned:
-        await asyncio.gather(*_owned, return_exceptions=True)
+    # Cancel application-level tasks in waves. Cancelling a parent task
+    # leaves any inner asyncio.create_task() children orphaned, so we
+    # re-scan and cancel until the wave is empty. We identify "ours" by
+    # the coroutine source filename living under .../backend/ AND NOT
+    # under site-packages — anyio/starlette/uvicorn install into
+    # .../backend/.venv/lib/python3.11/site-packages/ which would
+    # otherwise match the /backend/ substring and get cancelled, which
+    # deadlocks TestClient teardown.
+    for _ in range(5):
+        _current = asyncio.current_task()
+        pending = set()
+        for t in asyncio.all_tasks():
+            if t is _current or t.done():
+                continue
+            if t in _background_tasks:
+                pending.add(t)
+                continue
+            coro = t.get_coro()
+            code = getattr(coro, "cr_code", None) or getattr(coro, "gi_code", None)
+            if not code:
+                continue
+            fn = code.co_filename
+            if "/backend/" in fn and "/site-packages/" not in fn:
+                pending.add(t)
+        if not pending:
+            break
+        for t in pending:
+            t.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
     _background_tasks.clear()
     recon_adapter.stop()
     print("[SYSTEM] Moonkeep shutdown complete")
 
 
 _redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-try:
-    limiter = Limiter(key_func=get_remote_address, storage_uri=_redis_url)
-except Exception:
-    limiter = Limiter(key_func=get_remote_address)
+
+
+def _build_limiter():
+    """Construct the slowapi Limiter.
+
+    slowapi's Limiter(storage_uri=...) constructor does NOT eagerly connect
+    to Redis — failure surfaces only when the first rate-limited request
+    hits the storage, where it bubbles up as a 500. Eagerly ping Redis
+    here so we can fall back to in-memory cleanly when it's unreachable
+    (dev laptops without redis-server, CI containers, etc.).
+    """
+    if _redis_url.startswith(("redis://", "rediss://", "unix://")):
+        try:
+            import redis as _redis
+            _redis.Redis.from_url(_redis_url, socket_connect_timeout=1).ping()
+            return Limiter(key_func=get_remote_address, storage_uri=_redis_url)
+        except Exception as exc:
+            print(
+                f"[LIMITER] Redis unreachable at {_redis_url} ({exc}); "
+                f"falling back to in-memory rate-limit storage",
+                file=sys.stderr,
+            )
+    return Limiter(key_func=get_remote_address)
+
+
+limiter = _build_limiter()
 app = FastAPI(title="Moonkeep Elite API", version="2.0.0", lifespan=lifespan)
 app.state.limiter = limiter
 
@@ -194,11 +253,27 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Slow down."})
 
 
-ALLOWED_ORIGINS = os.environ.get("MOONKEEP_CORS_ORIGINS", "*").split(",")
+_cors_env = os.environ.get("MOONKEEP_CORS_ORIGINS")
+if _cors_env is None:
+    # Safe default: dev dashboard origins only.
+    ALLOWED_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    _allow_credentials = True
+else:
+    ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
+    # Wildcard + credentials is an invalid combo per CORS spec; downgrade.
+    if "*" in ALLOWED_ORIGINS:
+        print(
+            "[CORS] MOONKEEP_CORS_ORIGINS=* set; disabling allow_credentials "
+            "(browsers reject wildcard origin with credentials)",
+            file=sys.stderr,
+        )
+        _allow_credentials = False
+    else:
+        _allow_credentials = True
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -430,6 +505,9 @@ async def global_metrics():
     metrics = campaign_manager.get_metrics(active)
     metrics["active_plugins"] = len(plugin_manager.plugins)
     metrics["cap_modules"] = len(cap_engine.active_modules)
+    metrics["event_queue_size"] = event_queue.qsize()
+    metrics["event_queue_max"] = event_queue.maxsize
+    metrics["event_drops_total"] = _event_drops
     return metrics
 
 
@@ -1211,11 +1289,15 @@ async def pipeline_set_rule(body: PipelineRuleBody):
 
 @app.websocket("/ws/recon")
 async def recon_websocket(websocket: WebSocket):
+    # Browsers can't set headers on the WS handshake, so the token rides
+    # in the query string. Auth is REQUIRED. Accept first so we can send
+    # a 4xxx close code on rejection; closing pre-accept makes Starlette
+    # respond with HTTP 403, which JS clients can't read the reason from.
     token = websocket.query_params.get("token")
-    if token and not decode_token(token):
-        await websocket.close(code=4001, reason="Invalid token")
-        return
     await websocket.accept()
+    if not token or not decode_token(token):
+        await websocket.close(code=4401, reason="Unauthorized")
+        return
     recon_adapter.start()
 
     async def recv_from_ws():
@@ -1250,11 +1332,14 @@ async def recon_websocket(websocket: WebSocket):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # Auth is REQUIRED on the event stream — anyone listening here gets a
+    # firehose of every plugin's findings, including captured credentials.
+    # Accept first so we can send a 4xxx close code on rejection.
     token = websocket.query_params.get("token")
-    if token and not decode_token(token):
-        await websocket.close(code=4001, reason="Invalid token")
-        return
     await websocket.accept()
+    if not token or not decode_token(token):
+        await websocket.close(code=4401, reason="Unauthorized")
+        return
     connected_clients.add(websocket)
     try:
         while True:

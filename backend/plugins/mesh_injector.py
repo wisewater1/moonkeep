@@ -221,13 +221,13 @@ def _read_mac(iface: str) -> str:
 def _set_channel(iface: str, channel: int):
     try:
         subprocess.run(["iwconfig", iface, "channel", str(channel)],
-                       capture_output=True, check=False)
-    except FileNotFoundError:
+                       capture_output=True, check=False, timeout=10)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
 
 def _sh(cmd: list[str]):
     try:
-        subprocess.run(cmd, check=False, capture_output=True)
-    except FileNotFoundError:
+        subprocess.run(cmd, check=False, capture_output=True, timeout=10)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         pass

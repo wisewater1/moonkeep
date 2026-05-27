@@ -25,13 +25,23 @@ class SnifferPlugin(BasePlugin):
         kwargs = {"prn": self._process_packet, "store": False}
         if iface:
             kwargs["iface"] = iface
-        self.sniffer = AsyncSniffer(**kwargs)
-        self.sniffer.start()
-        print(f"Sniffer: DPI active on {iface or 'default interface'}.")
+        try:
+            self.sniffer = AsyncSniffer(**kwargs)
+            self.sniffer.start()
+            print(f"Sniffer: DPI active on {iface or 'default interface'}.")
+        except PermissionError as exc:
+            # Raw sockets need CAP_NET_RAW / root. In unprivileged environments
+            # (CI, containers, dev laptops) degrade to a no-op rather than 500.
+            self.sniffer = None
+            self.emit("WARN", {"msg": f"Sniffer: insufficient privileges for raw sockets ({exc})"})
 
     async def stop(self):
         if self.sniffer:
-            self.sniffer.stop()
+            try:
+                self.sniffer.stop()
+            except (PermissionError, OSError) as exc:
+                self.emit("WARN", {"msg": f"Sniffer stop failed: {exc}"})
+            self.sniffer = None
             self.emit("INFO", {"msg": f"Sniffer stopped. Captured {len(self.credentials)} credentials, {self.packet_count} packets"})
 
     # ------------------------------------------------------------------
