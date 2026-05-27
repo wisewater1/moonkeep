@@ -218,10 +218,32 @@ async def lifespan(app: FastAPI):
 
 
 _redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-try:
-    limiter = Limiter(key_func=get_remote_address, storage_uri=_redis_url)
-except Exception:
-    limiter = Limiter(key_func=get_remote_address)
+
+
+def _build_limiter():
+    """Construct the slowapi Limiter.
+
+    slowapi's Limiter(storage_uri=...) constructor does NOT eagerly connect
+    to Redis — failure surfaces only when the first rate-limited request
+    hits the storage, where it bubbles up as a 500. Eagerly ping Redis
+    here so we can fall back to in-memory cleanly when it's unreachable
+    (dev laptops without redis-server, CI containers, etc.).
+    """
+    if _redis_url.startswith(("redis://", "rediss://", "unix://")):
+        try:
+            import redis as _redis
+            _redis.Redis.from_url(_redis_url, socket_connect_timeout=1).ping()
+            return Limiter(key_func=get_remote_address, storage_uri=_redis_url)
+        except Exception as exc:
+            print(
+                f"[LIMITER] Redis unreachable at {_redis_url} ({exc}); "
+                f"falling back to in-memory rate-limit storage",
+                file=sys.stderr,
+            )
+    return Limiter(key_func=get_remote_address)
+
+
+limiter = _build_limiter()
 app = FastAPI(title="Moonkeep Elite API", version="2.0.0", lifespan=lifespan)
 app.state.limiter = limiter
 
@@ -1268,12 +1290,14 @@ async def pipeline_set_rule(body: PipelineRuleBody):
 @app.websocket("/ws/recon")
 async def recon_websocket(websocket: WebSocket):
     # Browsers can't set headers on the WS handshake, so the token rides
-    # in the query string. Auth is REQUIRED — no token = 4401, bad token = 4401.
+    # in the query string. Auth is REQUIRED. Accept first so we can send
+    # a 4xxx close code on rejection; closing pre-accept makes Starlette
+    # respond with HTTP 403, which JS clients can't read the reason from.
     token = websocket.query_params.get("token")
+    await websocket.accept()
     if not token or not decode_token(token):
         await websocket.close(code=4401, reason="Unauthorized")
         return
-    await websocket.accept()
     recon_adapter.start()
 
     async def recv_from_ws():
@@ -1310,11 +1334,12 @@ async def recon_websocket(websocket: WebSocket):
 async def websocket_endpoint(websocket: WebSocket):
     # Auth is REQUIRED on the event stream — anyone listening here gets a
     # firehose of every plugin's findings, including captured credentials.
+    # Accept first so we can send a 4xxx close code on rejection.
     token = websocket.query_params.get("token")
+    await websocket.accept()
     if not token or not decode_token(token):
         await websocket.close(code=4401, reason="Unauthorized")
         return
-    await websocket.accept()
     connected_clients.add(websocket)
     try:
         while True:
