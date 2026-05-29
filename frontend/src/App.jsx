@@ -162,10 +162,23 @@ const Dashboard = () => {
   const [manualTarget, setManualTarget] = useState("");
   const tacticalFeedRef = useRef(null);
   const cmdInputRef = useRef(null);
+  const cmdListRef = useRef(null);
 
   // ── Productivity Features ──────────────────────────────────────
   const [cmdOpen, setCmdOpen]           = useState(false);
   const [cmdQuery, setCmdQuery]         = useState('');
+  const [cmdSelected, setCmdSelected]   = useState(0);
+  const [navFilter, setNavFilter]       = useState('');
+  const [collapsedCats, setCollapsedCats] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('moonkeep_nav_collapsed') || '[]')); }
+    catch { return new Set(); }
+  });
+  const toggleCat = (cat) => setCollapsedCats(prev => {
+    const next = new Set(prev);
+    next.has(cat) ? next.delete(cat) : next.add(cat);
+    try { localStorage.setItem('moonkeep_nav_collapsed', JSON.stringify([...next])); } catch {}
+    return next;
+  });
   const [splitPanel, setSplitPanel]     = useState(null);
   const [logDrawerOpen, setLogDrawerOpen] = useState(false);
   const [redOpsMode, setRedOpsMode]     = useState(() => localStorage.getItem('moonkeep_red_ops') === '1');
@@ -204,7 +217,12 @@ const Dashboard = () => {
   // ── Ctrl+K command palette ─────────────────────────────────────
   useEffect(() => {
     const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); setCmdOpen(o => !o); setCmdQuery(''); }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setCmdOpen(o => !o);
+        setCmdQuery('');
+        setCmdSelected(0);
+      }
       if (e.key === 'Escape') { setCmdOpen(false); setSplitPanel(null); }
     };
     window.addEventListener('keydown', onKey);
@@ -212,6 +230,11 @@ const Dashboard = () => {
   }, []);
 
   useEffect(() => { if (cmdOpen) setTimeout(() => cmdInputRef.current?.focus(), 30); }, [cmdOpen]);
+  useEffect(() => {
+    if (!cmdOpen) return;
+    const el = cmdListRef.current?.querySelector('[data-cmd-selected="true"]');
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [cmdOpen, cmdSelected, cmdQuery]);
 
   const toggleFav = useCallback((name) => {
     setFavPlugins(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
@@ -1606,78 +1629,128 @@ const Dashboard = () => {
           </div>
         </div>
 
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: 0, flex: 1, overflowY: 'auto', paddingRight: '0.1rem' }}>
-          {/* ── Favorites strip ── */}
-          {favPlugins.length > 0 && (
-            <div>
-              <div className="nav-category" style={{ color: '#f59e0b' }}>★ PINNED</div>
-              {favPlugins.map(name => {
-                const badge = pluginFindings[name];
-                return (
-                  <button key={name} className={`btn-primary nav-btn ${activePlugin === name ? 'active' : ''}`}
-                    style={{ marginBottom: '0.15rem', paddingLeft: '0.6rem', justifyContent: 'space-between' }}
-                    onClick={() => setActivePlugin(name)}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#f59e0b', flexShrink: 0 }} />
-                      {name.toUpperCase()}
-                    </span>
-                    {badge > 0 && <span className="nav-badge">{badge}</span>}
-                  </button>
-                );
-              })}
-            </div>
+        {/* ── Inline sidebar filter ── */}
+        <div className="nav-filter-wrap">
+          <input
+            type="text"
+            value={navFilter}
+            onChange={e => setNavFilter(e.target.value)}
+            placeholder="Filter modules…"
+            aria-label="Filter modules"
+            className="nav-filter-input"
+          />
+          {navFilter && (
+            <button
+              className="nav-filter-clear"
+              onClick={() => setNavFilter('')}
+              aria-label="Clear filter"
+              title="Clear"
+            >×</button>
           )}
+        </div>
 
-          {/* ── Category nav ── */}
-          {Object.entries(PLUGIN_CATEGORIES).map(([cat, catNames]) => {
-            const available = plugins.filter(p => catNames.includes(p.name));
-            if (available.length === 0) return null;
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: 0, flex: 1, overflowY: 'auto', paddingRight: '0.1rem' }}>
+          {(() => {
+            const q = navFilter.trim().toLowerCase();
+            const matchesFilter = (name) => !q || name.toLowerCase().includes(q);
+            const visibleFavs = favPlugins.filter(matchesFilter);
             return (
-              <div key={cat}>
-                <div className="nav-category" style={{ color: CAT_COLORS[cat] }}>{cat}</div>
-                {available.map(p => {
-                  const badge = pluginFindings[p.name];
-                  const isLive = (p.name === 'Sniffer' && snifferActive) ||
-                    (p.name === 'Rogue-AP' && rogueAPActive) ||
-                    (p.name === 'Rogue-RADIUS' && rogueRADIUSActive) ||
-                    (p.name === 'Mesh-Injector' && meshActive) ||
-                    (p.name === 'Baseline-Calibrator' && baselineActive) ||
-                    (p.name === 'Spoofer' && spoofing) ||
-                    (p.name === 'Proxy' && proxyActive);
-                  const isFav = favPlugins.includes(p.name);
+              <>
+                {/* ── Favorites strip ── */}
+                {visibleFavs.length > 0 && (
+                  <div>
+                    <div className="nav-category" style={{ color: '#f59e0b' }}>★ PINNED</div>
+                    {visibleFavs.map(name => {
+                      const badge = pluginFindings[name];
+                      return (
+                        <button key={name} className={`btn-primary nav-btn ${activePlugin === name ? 'active' : ''}`}
+                          style={{ marginBottom: '0.15rem', paddingLeft: '0.6rem', justifyContent: 'space-between' }}
+                          onClick={() => setActivePlugin(name)}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#f59e0b', flexShrink: 0 }} />
+                            {name.toUpperCase()}
+                          </span>
+                          {badge > 0 && <span className="nav-badge">{badge}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* ── Category nav (collapsible) ── */}
+                {Object.entries(PLUGIN_CATEGORIES).map(([cat, catNames]) => {
+                  const available = plugins.filter(p => catNames.includes(p.name) && matchesFilter(p.name));
+                  if (available.length === 0) return null;
+                  // When the user is filtering, force-expand so matches are visible.
+                  const isCollapsed = !q && collapsedCats.has(cat);
                   return (
-                    <div key={p.name} className="nav-item-row">
+                    <div key={cat}>
                       <button
-                        className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
-                        style={{ flex: 1, marginBottom: '0.15rem', paddingLeft: '0.6rem', justifyContent: 'space-between' }}
-                        onClick={() => setActivePlugin(p.name)}
+                        className="nav-category nav-category-button"
+                        style={{ color: CAT_COLORS[cat] }}
+                        aria-expanded={!isCollapsed}
+                        aria-controls={`navcat-${cat}`}
+                        onClick={() => toggleCat(cat)}
                       >
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <span style={{
-                            width: 5, height: 5, borderRadius: '50%', flexShrink: 0,
-                            background: isLive ? '#22c55e' : activePlugin === p.name ? CAT_COLORS[cat] : 'rgba(255,255,255,0.15)',
-                            boxShadow: isLive ? '0 0 5px #22c55e' : 'none',
-                            animation: isLive ? 'pulse 2s ease-in-out infinite' : 'none',
-                          }} />
-                          {p.name.toUpperCase()}
-                        </span>
-                        {badge > 0 && <span className="nav-badge">{badge}</span>}
+                        <span className="nav-category-chevron" aria-hidden="true">{isCollapsed ? '▸' : '▾'}</span>
+                        <span style={{ flex: 1 }}>{cat}</span>
+                        <span className="nav-category-count" aria-label={`${available.length} modules`}>{available.length}</span>
                       </button>
-                      <button className="nav-pin-btn" onClick={() => toggleFav(p.name)} title={isFav ? 'Unpin' : 'Pin'} style={{ opacity: isFav ? 1 : 0 }}>
-                        {isFav ? '★' : '☆'}
-                      </button>
+                      <div id={`navcat-${cat}`} hidden={isCollapsed}>
+                        {available.map(p => {
+                            const badge = pluginFindings[p.name];
+                            const isLive = (p.name === 'Sniffer' && snifferActive) ||
+                              (p.name === 'Rogue-AP' && rogueAPActive) ||
+                              (p.name === 'Rogue-RADIUS' && rogueRADIUSActive) ||
+                              (p.name === 'Mesh-Injector' && meshActive) ||
+                              (p.name === 'Baseline-Calibrator' && baselineActive) ||
+                              (p.name === 'Spoofer' && spoofing) ||
+                              (p.name === 'Proxy' && proxyActive);
+                            const isFav = favPlugins.includes(p.name);
+                            return (
+                              <div key={p.name} className="nav-item-row">
+                                <button
+                                  className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
+                                  style={{ flex: 1, marginBottom: '0.15rem', paddingLeft: '0.6rem', justifyContent: 'space-between' }}
+                                  onClick={() => setActivePlugin(p.name)}
+                                >
+                                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    <span style={{
+                                      width: 5, height: 5, borderRadius: '50%', flexShrink: 0,
+                                      background: isLive ? '#22c55e' : activePlugin === p.name ? CAT_COLORS[cat] : 'rgba(255,255,255,0.15)',
+                                      boxShadow: isLive ? '0 0 5px #22c55e' : 'none',
+                                      animation: isLive ? 'pulse 2s ease-in-out infinite' : 'none',
+                                    }} />
+                                    {p.name.toUpperCase()}
+                                  </span>
+                                  {badge > 0 && <span className="nav-badge">{badge}</span>}
+                                </button>
+                                <button className="nav-pin-btn" onClick={() => toggleFav(p.name)} title={isFav ? 'Unpin' : 'Pin'} style={{ opacity: isFav ? 1 : 0 }}>
+                                  {isFav ? '★' : '☆'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                      </div>
                     </div>
                   );
                 })}
-              </div>
+                {plugins
+                  .filter(p => !Object.values(PLUGIN_CATEGORIES).flat().includes(p.name) && matchesFilter(p.name))
+                  .map(p => (
+                  <button key={p.name} className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
+                    style={{ marginBottom: '0.15rem' }} onClick={() => setActivePlugin(p.name)}>
+                    {p.name.toUpperCase()}
+                  </button>
+                ))}
+                {q && plugins.filter(p => matchesFilter(p.name)).length === 0 && (
+                  <div style={{ padding: '0.6rem', color: 'var(--text-secondary)', fontSize: '0.65rem', textAlign: 'center' }}>
+                    No modules match &ldquo;{navFilter}&rdquo;
+                  </div>
+                )}
+              </>
             );
-          })}
-          {plugins.filter(p => !Object.values(PLUGIN_CATEGORIES).flat().includes(p.name)).map(p => (
-            <button key={p.name} className={`btn-primary nav-btn ${activePlugin === p.name ? 'active' : ''}`}
-              style={{ marginBottom: '0.15rem' }} onClick={() => setActivePlugin(p.name)}>
-              {p.name.toUpperCase()}
-            </button>
-          ))}
+          })()}
         </nav>
 
         {/* Engine status + theme toggle */}
@@ -1923,7 +1996,21 @@ const Dashboard = () => {
       </div>
 
       {/* ── Command Palette (Ctrl+K) ── */}
-      {cmdOpen && (
+      {cmdOpen && (() => {
+        const q = cmdQuery.toLowerCase();
+        const actions = [
+          { kind: 'action', label: '▣ Toggle Split Pane',     run: () => { setSplitPanel(s => s ? null : plugins.find(p => p.name !== activePlugin)?.name); } },
+          { kind: 'action', label: '▽ Toggle Log Drawer',     run: () => { setLogDrawerOpen(o => !o); } },
+          { kind: 'action', label: `${redOpsMode ? '○' : '◉'} Toggle Red Ops Mode`, run: () => { setRedOpsMode(m => !m); } },
+          { kind: 'action', label: '⎚ Clear Strike Log',      run: () => { setStrikeLog(["[#] LOG CLEARED"]); } },
+        ].filter(a => !q || a.label.toLowerCase().includes(q));
+        const modules = plugins
+          .filter(p => !q || p.name.toLowerCase().includes(q))
+          .map(p => ({ kind: 'module', plugin: p, run: () => { setActivePlugin(p.name); } }));
+        const items = [...actions, ...modules];
+        const selected = items.length ? Math.min(cmdSelected, items.length - 1) : 0;
+        const exec = (i) => { const it = items[i]; if (!it) return; it.run(); setCmdOpen(false); };
+        return (
         <div className="cmd-overlay" onClick={() => setCmdOpen(false)}>
           <div className="cmd-palette" onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -1931,64 +2018,69 @@ const Dashboard = () => {
               <input
                 ref={cmdInputRef}
                 value={cmdQuery}
-                onChange={e => setCmdQuery(e.target.value)}
+                onChange={e => { setCmdQuery(e.target.value); setCmdSelected(0); }}
                 placeholder="Search modules, actions…"
                 style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'white', fontFamily: 'Fira Code, monospace', fontSize: '0.85rem' }}
                 onKeyDown={e => {
-                  if (e.key === 'Escape') setCmdOpen(false);
-                  if (e.key === 'Enter') {
-                    const filtered = [...plugins.map(p => p.name), 'Split', 'Log Drawer', 'Red Ops', 'Clear Log']
-                      .filter(n => n.toLowerCase().includes(cmdQuery.toLowerCase()));
-                    if (filtered[0]) {
-                      if (filtered[0] === 'Split') { setSplitPanel(plugins.find(p => p.name !== activePlugin)?.name); }
-                      else if (filtered[0] === 'Log Drawer') { setLogDrawerOpen(o => !o); }
-                      else if (filtered[0] === 'Red Ops') { setRedOpsMode(m => !m); }
-                      else if (filtered[0] === 'Clear Log') { setStrikeLog(["[#] LOG CLEARED"]); }
-                      else { setActivePlugin(filtered[0]); }
-                      setCmdOpen(false);
-                    }
-                  }
+                  // Stop bubbling so the global Escape handler doesn't also
+                  // clear the split panel when the user dismisses the palette.
+                  if (e.key === 'Escape') { e.stopPropagation(); setCmdOpen(false); }
+                  else if (e.key === 'ArrowDown') { e.preventDefault(); setCmdSelected(s => Math.min(s + 1, Math.max(items.length - 1, 0))); }
+                  else if (e.key === 'ArrowUp')   { e.preventDefault(); setCmdSelected(s => Math.max(s - 1, 0)); }
+                  else if (e.key === 'Home')      { e.preventDefault(); setCmdSelected(0); }
+                  else if (e.key === 'End')       { e.preventDefault(); setCmdSelected(Math.max(items.length - 1, 0)); }
+                  else if (e.key === 'Enter')     { e.preventDefault(); exec(selected); }
                 }}
               />
-              <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>ESC to close</span>
+              <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>↑↓ · ↵ · ESC</span>
             </div>
-            <div style={{ maxHeight: '360px', overflowY: 'auto', padding: '0.4rem 0' }}>
-              {/* Action shortcuts */}
-              {[{ label: '▣ Toggle Split Pane', action: () => { setSplitPanel(s => s ? null : plugins.find(p => p.name !== activePlugin)?.name); setCmdOpen(false); } },
-                { label: '▽ Toggle Log Drawer', action: () => { setLogDrawerOpen(o => !o); setCmdOpen(false); } },
-                { label: `${redOpsMode ? '○' : '◉'} Toggle Red Ops Mode`, action: () => { setRedOpsMode(m => !m); setCmdOpen(false); } },
-                { label: '⎚ Clear Strike Log', action: () => { setStrikeLog(["[#] LOG CLEARED"]); setCmdOpen(false); } },
-              ].filter(a => !cmdQuery || a.label.toLowerCase().includes(cmdQuery.toLowerCase())).map(a => (
-                <div key={a.label} className="cmd-item cmd-action" onClick={a.action}>
-                  <span style={{ color: '#a78bfa', fontSize: '0.65rem', marginRight: '0.5rem' }}>⚡</span>
-                  {a.label}
+            <div ref={cmdListRef} style={{ maxHeight: '360px', overflowY: 'auto', padding: '0.4rem 0' }}>
+              {items.length === 0 && (
+                <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+                  No matches for &ldquo;{cmdQuery}&rdquo;
                 </div>
-              ))}
-              {/* Module results */}
-              {plugins
-                .filter(p => !cmdQuery || p.name.toLowerCase().includes(cmdQuery.toLowerCase()))
-                .map(p => {
-                  const cat = Object.entries(PLUGIN_CATEGORIES).find(([, names]) => names.includes(p.name))?.[0];
-                  const badge = pluginFindings[p.name];
-                  const isFav = favPlugins.includes(p.name);
+              )}
+              {items.map((it, i) => {
+                const isSel = i === selected;
+                if (it.kind === 'action') {
                   return (
-                    <div key={p.name} className={`cmd-item ${activePlugin === p.name ? 'cmd-item-active' : ''}`}
-                      onClick={() => { setActivePlugin(p.name); setCmdOpen(false); }}>
-                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: CAT_COLORS[cat] || '#6366f1', flexShrink: 0, marginRight: '0.5rem' }} />
-                      <span style={{ flex: 1 }}>{p.name.toUpperCase()}</span>
-                      {badge > 0 && <span className="nav-badge" style={{ marginRight: '0.5rem' }}>{badge}</span>}
-                      <span style={{ fontSize: '0.5rem', color: 'var(--text-secondary)', marginRight: '0.5rem' }}>{cat}</span>
-                      <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: isFav ? '#f59e0b' : '#444', fontSize: '0.7rem', padding: 0 }}
-                        onClick={e => { e.stopPropagation(); toggleFav(p.name); }}>
-                        {isFav ? '★' : '☆'}
-                      </button>
+                    <div key={`a-${it.label}`}
+                      data-cmd-selected={isSel || undefined}
+                      className={`cmd-item cmd-action ${isSel ? 'cmd-item-active' : ''}`}
+                      onMouseEnter={() => setCmdSelected(i)}
+                      onClick={() => exec(i)}>
+                      <span style={{ color: '#a78bfa', fontSize: '0.65rem', marginRight: '0.5rem' }}>⚡</span>
+                      {it.label}
                     </div>
                   );
-                })}
+                }
+                const p = it.plugin;
+                const cat = Object.entries(PLUGIN_CATEGORIES).find(([, names]) => names.includes(p.name))?.[0];
+                const badge = pluginFindings[p.name];
+                const isFav = favPlugins.includes(p.name);
+                return (
+                  <div key={`m-${p.name}`}
+                    data-cmd-selected={isSel || undefined}
+                    className={`cmd-item ${isSel ? 'cmd-item-active' : ''}`}
+                    onMouseEnter={() => setCmdSelected(i)}
+                    onClick={() => exec(i)}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: CAT_COLORS[cat] || '#6366f1', flexShrink: 0, marginRight: '0.5rem' }} />
+                    <span style={{ flex: 1 }}>{p.name.toUpperCase()}</span>
+                    {badge > 0 && <span className="nav-badge" style={{ marginRight: '0.5rem' }}>{badge}</span>}
+                    <span style={{ fontSize: '0.5rem', color: 'var(--text-secondary)', marginRight: '0.5rem' }}>{cat}</span>
+                    <button aria-label={isFav ? `Unpin ${p.name}` : `Pin ${p.name}`}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: isFav ? '#f59e0b' : '#444', fontSize: '0.7rem', padding: 0 }}
+                      onClick={e => { e.stopPropagation(); toggleFav(p.name); }}>
+                      {isFav ? '★' : '☆'}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
     </div>
   );
