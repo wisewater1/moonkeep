@@ -149,6 +149,7 @@ const Dashboard = () => {
   // Fuzzer
   const [fuzzResults, setFuzzResults] = useState([]);
   const [fuzzTarget, setFuzzTarget] = useState('');
+  const [fuzzStats, setFuzzStats] = useState(null);
   // HID-BLE
   const [bleDevices, setBleDevices] = useState([]);
   const [bleScanning, setBleScanning] = useState(false);
@@ -175,6 +176,15 @@ const Dashboard = () => {
   const [adminAudit, setAdminAudit] = useState([]);
   const [adminTab, setAdminTab] = useState('users');
   const [accountOpen, setAccountOpen] = useState(false);
+  const [pipelineStatus, setPipelineStatus] = useState(null);
+  const [pipelineBusy, setPipelineBusy] = useState({});
+  const [campMetrics, setCampMetrics] = useState(null);
+  const [campTimeline, setCampTimeline] = useState([]);
+  const [campHeatmap, setCampHeatmap] = useState(null);
+  const [campExec, setCampExec] = useState('');
+  const [campTab, setCampTab] = useState('metrics');
+  const [capSessionOpen, setCapSessionOpen] = useState(false);
+  const [capSessionData, setCapSessionData] = useState(null);
   const tacticalFeedRef = useRef(null);
   const cmdInputRef = useRef(null);
 
@@ -194,12 +204,14 @@ const Dashboard = () => {
     EXPLOIT:   ['Post-Exploit', 'Fuzzer', 'HID-BLE-Strike', 'Cyber-Strike'],
     INTEL:     ['AI-Orchestrator', 'Secret-Hunter', 'Vuln-Scanner', 'Exploit-Mapper', 'Web-Scanner', 'Identity-Correlator'],
     CREDS:     ['Cred-Spray', 'Hash-Cracker', 'Cred-Genome', 'Baseline-Calibrator'],
-    REPORT:    ['Report-Builder'],
+    REPORT:    ['Report-Builder', 'Campaign-Dashboard'],
+    SYSTEM:    ['Pipeline'],
     ADMIN:     ['Admin'],
   };
   const CAT_COLORS = {
     RECON: '#06b6d4', WIFI: '#f97316', INTERCEPT: '#a78bfa',
     EXPLOIT: '#ef4444', INTEL: '#22c55e', CREDS: '#f59e0b', REPORT: '#94a3b8',
+    SYSTEM: '#38bdf8',
     ADMIN: '#ec4899',
   };
 
@@ -241,7 +253,11 @@ const Dashboard = () => {
       try {
         const res = await authFetch(`${API_BASE}/plugins`);
         const data = await res.json();
-        const synthetic = [{ name: 'Recon-Console' }];
+        const synthetic = [
+          { name: 'Recon-Console' },
+          { name: 'Pipeline' },
+          { name: 'Campaign-Dashboard' },
+        ];
         try {
           const meRes = await authFetch(`${API_BASE}/auth/me`);
           if (meRes.ok) {
@@ -350,6 +366,18 @@ const Dashboard = () => {
       if (activePlugin === "Exploit-Mapper") {
         authFetch(`${API_BASE}/exploit_mapper/mappings`).then(r => r.json()).then(d => setExploitMappingsAll(d.mappings || [])).catch(() => { });
       }
+      if (activePlugin === "Fuzzer") {
+        authFetch(`${API_BASE}/fuzzer/stats`).then(r => r.json()).then(d => setFuzzStats(d.stats || d)).catch(() => { });
+      }
+      if (activePlugin === "Pipeline") {
+        authFetch(`${API_BASE}/pipeline/status`).then(r => r.json()).then(setPipelineStatus).catch(() => { });
+      }
+      if (activePlugin === "Campaign-Dashboard" && activeCampaign) {
+        authFetch(`${API_BASE}/campaigns/${activeCampaign}/metrics`).then(r => r.ok ? r.json() : null).then(d => d && setCampMetrics(d)).catch(() => { });
+        authFetch(`${API_BASE}/campaigns/${activeCampaign}/timeline?limit=200`).then(r => r.ok ? r.json() : null).then(d => d && setCampTimeline(d.events || [])).catch(() => { });
+        authFetch(`${API_BASE}/campaigns/${activeCampaign}/heatmap`).then(r => r.ok ? r.json() : null).then(d => d && setCampHeatmap(d)).catch(() => { });
+        authFetch(`${API_BASE}/campaigns/${activeCampaign}/executive_summary`).then(r => r.ok ? r.json() : null).then(d => d && setCampExec(d.summary || '')).catch(() => { });
+      }
       if (activePlugin === "Admin") {
         authFetch(`${API_BASE}/admin/users`).then(r => r.json()).then(d => setAdminUsers(d.users || d || [])).catch(() => { });
         authFetch(`${API_BASE}/admin/audit`).then(r => r.json()).then(d => setAdminAudit(d.entries || d.audit || d || [])).catch(() => { });
@@ -367,7 +395,7 @@ const Dashboard = () => {
     pollOnce();
     const poll = setInterval(pollOnce, 4000);
     return () => clearInterval(poll);
-  }, [activePlugin, rogueAPActive, rogueRADIUSActive, baselineActive, meshActive, authFetch]);
+  }, [activePlugin, rogueAPActive, rogueRADIUSActive, baselineActive, meshActive, activeCampaign, authFetch]);
 
   // Auto-scroll tactical feed on new entries
   useEffect(() => {
@@ -787,11 +815,16 @@ const Dashboard = () => {
       case "Fuzzer":
         return (
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
               <h3>Protocol Mutation Fuzzer</h3>
-              <span className={`status-badge ${fuzzingStatus !== 'IDLE' ? 'active' : ''}`}>
-                <span className={fuzzingStatus !== 'IDLE' ? 'pulse' : ''}>{fuzzingStatus}</span>
-              </span>
+              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                {fuzzStats && Object.entries(fuzzStats).filter(([k]) => k !== 'running').map(([k, v]) => (
+                  <span key={k} className="status-badge" style={{ fontSize: '0.55rem' }}>{k}: {typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
+                ))}
+                <span className={`status-badge ${fuzzingStatus !== 'IDLE' ? 'active' : ''}`}>
+                  <span className={fuzzingStatus !== 'IDLE' ? 'pulse' : ''}>{fuzzingStatus}</span>
+                </span>
+              </div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
               <input value={fuzzTarget} onChange={e => setFuzzTarget(e.target.value)} placeholder={activeTarget?.ip || 'Target IP'}
@@ -811,6 +844,13 @@ const Dashboard = () => {
                 if (r) setFuzzResults(prev => [{ proto: 'mDNS', ip, ...r, ts: new Date().toLocaleTimeString() }, ...prev]);
                 setFuzzingStatus('IDLE');
               }}>FUZZ mDNS</button>
+              <button className="btn-primary" onClick={async () => {
+                const ip = fuzzTarget || activeTarget?.ip || '';
+                setFuzzingStatus('UPnP…');
+                const r = await apiCall('/fuzzer/upnp', 'POST', ip ? { ip } : {});
+                if (r) setFuzzResults(prev => [{ proto: 'UPnP', ip: ip || '(auto)', ...r, ts: new Date().toLocaleTimeString() }, ...prev]);
+                setFuzzingStatus('IDLE');
+              }}>FUZZ UPnP</button>
               {fuzzResults.length > 0 && <button className="btn-primary btn-ghost" onClick={() => setFuzzResults([])}>CLEAR</button>}
             </div>
             <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
@@ -1696,6 +1736,176 @@ const Dashboard = () => {
           </div>
         );
 
+      case "Pipeline":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <h3>Pipeline Engine</h3>
+              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                <span className={`status-badge ${pipelineStatus?.active ? 'active' : ''}`} style={{ fontSize: '0.6rem' }}>
+                  {pipelineStatus?.active ? '● ACTIVE' : '○ INACTIVE'}
+                </span>
+                {pipelineStatus?.scanned_ips && (
+                  <span className="status-badge" style={{ fontSize: '0.6rem' }}>
+                    {pipelineStatus.scanned_ips.length} SCANNED
+                  </span>
+                )}
+              </div>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Toggle event-driven rules that auto-chain plugins. Disabling a rule prevents that hop in the kill-chain pipeline.
+            </p>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              {!pipelineStatus && <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Loading rules…</p>}
+              {pipelineStatus && Object.entries(pipelineStatus.rules || {}).map(([name, enabled]) => (
+                <div key={name} className="glass-card" style={{ padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.02)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: enabled ? '#22c55e' : '#6b7280' }} />
+                    <span style={{ fontFamily: 'Fira Code', fontSize: '0.75rem' }}>{name}</span>
+                  </div>
+                  <button
+                    disabled={!!pipelineBusy[name]}
+                    className="btn-primary"
+                    style={{ fontSize: '0.6rem', padding: '0.25rem 0.6rem', background: enabled ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)', borderColor: enabled ? 'rgba(239,68,68,0.5)' : 'rgba(34,197,94,0.5)', color: enabled ? '#f87171' : '#4ade80', opacity: pipelineBusy[name] ? 0.5 : 1 }}
+                    onClick={async () => {
+                      setPipelineBusy(prev => ({ ...prev, [name]: true }));
+                      const r = await apiCall('/pipeline/rule', 'POST', { rule: name, enabled: !enabled });
+                      if (r) setPipelineStatus(prev => prev ? { ...prev, rules: { ...prev.rules, [name]: r.enabled } } : prev);
+                      setPipelineBusy(prev => ({ ...prev, [name]: false }));
+                    }}>
+                    {enabled ? 'DISABLE' : 'ENABLE'}
+                  </button>
+                </div>
+              ))}
+            </div>
+            {pipelineStatus?.scanned_ips?.length > 0 && (
+              <div className="glass-card" style={{ padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.02)' }}>
+                <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>SCANNED (short-circuit cache)</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                  {pipelineStatus.scanned_ips.map(ip => (
+                    <span key={ip} style={{ fontSize: '0.65rem', fontFamily: 'monospace', padding: '0.1rem 0.4rem', background: 'rgba(0,0,0,0.4)', borderRadius: '3px', color: 'var(--neo-cyan)' }}>{ip}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+
+      case "Campaign-Dashboard":
+        return (
+          <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div>
+                <h3 style={{ margin: 0 }}>Campaign Dashboard</h3>
+                <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>{activeCampaign || '(no campaign selected)'}</span>
+              </div>
+              <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+                {['metrics', 'timeline', 'heatmap', 'summary'].map(t => (
+                  <button key={t} className={`btn-primary ${campTab === t ? '' : 'btn-ghost'}`} style={{ fontSize: '0.65rem' }} onClick={() => setCampTab(t)}>
+                    {t.toUpperCase()}
+                  </button>
+                ))}
+                <a
+                  href={`${API_BASE}/report/${encodeURIComponent(activeCampaign || 'default')}/html`}
+                  target="_blank" rel="noreferrer noopener"
+                  className="btn-primary"
+                  style={{ fontSize: '0.65rem', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+                  HTML REPORT ↗
+                </a>
+              </div>
+            </div>
+
+            {campTab === 'metrics' && (
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '0.75rem' }}>
+                  {[
+                    ['HOSTS', campMetrics?.hosts ?? 0, '#06b6d4'],
+                    ['NETWORKS', campMetrics?.networks ?? 0, '#f97316'],
+                    ['CREDENTIALS', campMetrics?.credentials ?? 0, '#f43f5e'],
+                    ['FINDINGS', campMetrics?.findings ?? 0, '#22c55e'],
+                  ].map(([label, val, color]) => (
+                    <div key={label} className="glass-card" style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.02)' }}>
+                      <div style={{ fontSize: '0.55rem', color: 'var(--text-secondary)', letterSpacing: '1px' }}>{label}</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 900, color }}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+                {[
+                  ['Vendor distribution', campMetrics?.vendor_distribution],
+                  ['Encryption distribution', campMetrics?.encryption_distribution],
+                  ['Credential sources', campMetrics?.credential_sources],
+                ].filter(([, d]) => d && Object.keys(d).length > 0).map(([label, dist]) => {
+                  const max = Math.max(...Object.values(dist));
+                  return (
+                    <div key={label} className="glass-card" style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.02)', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', letterSpacing: '1px' }}>{label.toUpperCase()}</div>
+                      {Object.entries(dist).map(([k, v]) => (
+                        <div key={k} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.7rem' }}>
+                          <span style={{ width: '120px', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{k}</span>
+                          <div style={{ flex: 1, height: '6px', background: 'rgba(0,0,0,0.4)', borderRadius: '3px', overflow: 'hidden' }}>
+                            <div style={{ width: `${(v / max) * 100}%`, height: '100%', background: 'var(--neo-cyan)' }} />
+                          </div>
+                          <span style={{ width: '32px', textAlign: 'right', color: 'var(--neo-cyan)', fontFamily: 'monospace' }}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+                {!campMetrics && <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Loading metrics…</p>}
+              </div>
+            )}
+
+            {campTab === 'timeline' && (
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.3rem', fontFamily: 'Fira Code', fontSize: '0.7rem' }}>
+                {campTimeline.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>No timeline events.</p>}
+                {campTimeline.slice().reverse().map((e, i) => (
+                  <div key={i} className="glass-card" style={{ padding: '0.4rem 0.6rem', background: 'rgba(255,255,255,0.02)', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>{e.ts || e.timestamp || ''}</span>
+                    {e.plugin && <span style={{ color: 'var(--neo-cyan)', fontWeight: 700 }}>{e.plugin}</span>}
+                    {e.severity && <span style={{ color: e.severity === 'CRITICAL' ? '#f43f5e' : e.severity === 'HIGH' ? '#f97316' : '#f59e0b' }}>{e.severity}</span>}
+                    {e.target && <span style={{ color: '#a78bfa' }}>{e.target}</span>}
+                    <span style={{ flex: 1 }}>{e.message || e.msg || e.action || ''}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {campTab === 'heatmap' && (
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                {!campHeatmap && <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Loading heatmap…</p>}
+                {campHeatmap && Object.entries(campHeatmap).sort((a, b) => (b[1].risk_score || 0) - (a[1].risk_score || 0)).map(([ip, h]) => {
+                  const r = h.risk_score || 0;
+                  const color = r >= 10 ? '#f43f5e' : r >= 5 ? '#f97316' : r >= 1 ? '#f59e0b' : '#22c55e';
+                  return (
+                    <div key={ip} className="glass-card" style={{ padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.02)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <span style={{ color: 'var(--neo-cyan)', fontWeight: 700, fontFamily: 'monospace' }}>{ip}</span>
+                        {h.vendor && <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>{h.vendor}</span>}
+                        <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                          {Object.entries(h.events || {}).map(([sev, n]) => (
+                            <span key={sev} style={{ marginRight: '0.5rem' }}>{sev}: {n}</span>
+                          ))}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '1.2rem', fontWeight: 900, color }}>{r}</div>
+                        <div style={{ fontSize: '0.55rem', color: 'var(--text-secondary)' }}>RISK</div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {campHeatmap && Object.keys(campHeatmap).length === 0 && <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>No targets in this campaign yet.</p>}
+              </div>
+            )}
+
+            {campTab === 'summary' && (
+              <div style={{ flex: 1, overflowY: 'auto', background: 'rgba(0,0,0,0.4)', padding: '1rem', borderRadius: '8px', fontFamily: 'Fira Code', fontSize: '0.78rem', whiteSpace: 'pre-wrap', color: 'var(--text-secondary)' }}>
+                {campExec || 'No summary available yet.'}
+              </div>
+            )}
+          </div>
+        );
+
       case "Admin":
         return (
           <div className="glass-card fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -1910,6 +2120,21 @@ const Dashboard = () => {
                 fontWeight: 700, letterSpacing: '1px',
               }}>
               {bcapStatus.running ? '■ STOP' : '▶ START'}
+            </button>
+            <button
+              onClick={async () => {
+                const r = await apiCall('/bettercap/session');
+                setCapSessionData(r);
+                setCapSessionOpen(true);
+              }}
+              title="View bettercap session info"
+              style={{
+                background: 'transparent', border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '4px', padding: '0.2rem 0.4rem', cursor: 'pointer',
+                fontSize: '0.55rem', color: 'var(--text-secondary)',
+                fontWeight: 700, letterSpacing: '1px',
+              }}>
+              ⓘ INFO
             </button>
             <button
               onClick={() => setAccountOpen(true)}
@@ -2224,6 +2449,20 @@ const Dashboard = () => {
       )}
 
       <AccountMenu open={accountOpen} onClose={() => setAccountOpen(false)} currentUser={currentUser} />
+
+      {capSessionOpen && (
+        <div onClick={() => setCapSessionOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div onClick={e => e.stopPropagation()} className="glass-card" style={{ width: '560px', maxWidth: '94vw', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0 }}>Bettercap Session</h3>
+              <button onClick={() => setCapSessionOpen(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', fontSize: '1.2rem', cursor: 'pointer' }}>×</button>
+            </div>
+            <pre style={{ margin: 0, fontFamily: 'Fira Code', fontSize: '0.75rem', whiteSpace: 'pre-wrap', background: 'rgba(0,0,0,0.4)', padding: '0.75rem', borderRadius: '4px', color: 'var(--text-secondary)', maxHeight: '60vh', overflowY: 'auto' }}>
+              {capSessionData?.output || (capSessionData ? JSON.stringify(capSessionData, null, 2) : 'Loading…')}
+            </pre>
+          </div>
+        </div>
+      )}
 
     </div>
   );
