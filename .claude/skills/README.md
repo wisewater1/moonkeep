@@ -10,14 +10,21 @@ Each skill lives in its own directory as `SKILL.md`. They follow the
 ## Install everywhere (all your projects)
 
 These ship as **project skills** here (active in this repo). To make them available across *every*
-project, install them as personal skills:
+project, install them as personal skills.
 
+*Windows (PowerShell):*
+```powershell
+.\install-skills.ps1            # copy into ~\.claude\skills
+.\install-skills.ps1 -Symlink   # symlink instead (needs admin or Developer Mode)
+```
+
+*macOS / Linux (bash):*
 ```bash
 bash install-skills.sh            # copy into ~/.claude/skills/
 bash install-skills.sh --symlink  # symlink instead, so repo edits stay live
 ```
 
-Then **restart Claude Code** once — a newly created top-level `~/.claude/skills/` directory is only
+Then **restart Claude Code** once — a newly created top-level `~/.claude/skills` directory is only
 watched after a restart.
 
 ## The 25
